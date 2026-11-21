@@ -59,16 +59,21 @@ export class AudioSys {
   }
   crash(strength = 1) { this._noise(0.25, 0.3 * strength, 500); this._tone(70, 0.2, 'sine', 0.3 * strength); }
   horn() { this._tone(370, 0.18, 'square', 0.1); this._tone(466, 0.18, 'square', 0.08); }
+  // The big rigs honk lower and longer — trucks and buses get their own voice.
+  hornBig() { this._tone(185, 0.32, 'square', 0.12); this._tone(233, 0.32, 'square', 0.1); }
+  // Stunt-ramp launch: a rising chirp so airtime feels like a reward.
+  stunt() { this._tone(523, 0.1, 'triangle', 0.14); this._tone(784, 0.12, 'triangle', 0.14, 0.07); this._tone(1046, 0.16, 'triangle', 0.12, 0.14); }
   pass() { [523, 659, 784, 1046].forEach((f, i) => this._tone(f, 0.16, 'triangle', 0.18, i * 0.09)); }
   fail() { [392, 330, 262].forEach((f, i) => this._tone(f, 0.22, 'sawtooth', 0.12, i * 0.12)); }
   bust() { [440, 415, 392, 370].forEach((f, i) => this._tone(f, 0.25, 'square', 0.12, i * 0.14)); }
   wasted() { [330, 294, 262, 196].forEach((f, i) => this._tone(f, 0.3, 'sawtooth', 0.14, i * 0.16)); }
-  engine(speed01, driving) {
+  engine(speed01, driving, pitch = 1) {
     if (!this.ctx || !this.engineGain) return;
     const target = this.muted ? 0 : (driving ? 0.05 + speed01 * 0.09 : 0);
     this.engineGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.08);
-    this.engineOsc.frequency.setTargetAtTime(55 + speed01 * 140, this.ctx.currentTime, 0.08);
-    this.engineFilter.frequency.setTargetAtTime(300 + speed01 * 900, this.ctx.currentTime, 0.1);
+    // pitch: sports cars rev higher, trucks/buses rumble lower.
+    this.engineOsc.frequency.setTargetAtTime((55 + speed01 * 140) * pitch, this.ctx.currentTime, 0.08);
+    this.engineFilter.frequency.setTargetAtTime((300 + speed01 * 900) * pitch, this.ctx.currentTime, 0.1);
   }
   siren(on, dt) {
     if (!this.ctx || !this.sirenGain) return;

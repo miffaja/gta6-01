@@ -29,7 +29,8 @@ export function buildCity(seed) {
     if (roll < 0.12) kind = 1; else if (roll < 0.24) kind = 2; else if (roll < 0.30) kind = 3;
     const b = { c, r, x, y, w: BLOCK, h: BLOCK, kind, buildings: [], trees: [], cars: [] };
     if (kind === 0) {
-      // Downtown core (middle blocks) grows tall towers; the edges stay low-rise.
+      // Downtown (the middle of the grid) grows tall towers; the outer blocks
+      // stay low-rise, so the skyline reads at a glance in the render.
       const dc = Math.abs(c - (COLS - 1) / 2) + Math.abs(r - (ROWS - 1) / 2);
       const tall = dc <= 3 ? 3 : dc <= 5 ? 2 : 1;
       const n = ri(rng, 1, 3);
@@ -46,7 +47,7 @@ export function buildCity(seed) {
       for (let k = 0; k < ri(rng, 5, 9); k++) {
         b.trees.push({ x: x + rf(rng, 24, BLOCK - 24), y: y + rf(rng, 24, BLOCK - 24), r: rf(rng, 9, 15) });
       }
-      // A winding park path + a small fountain plaza at the centre.
+      // A winding gravel path through the park with a small fountain plaza.
       b.path = [
         { x: x + 10, y: y + BLOCK / 2 }, { x: x + BLOCK * 0.35, y: y + BLOCK * 0.4 },
         { x: x + BLOCK / 2, y: y + BLOCK / 2 }, { x: x + BLOCK * 0.65, y: y + BLOCK * 0.6 },
@@ -81,8 +82,8 @@ export function buildCity(seed) {
   // Palm trees along the beach.
   const palms = [];
   for (let k = 0; k < 22; k++) palms.push({ x: 60 + k * 140 + rf(rng, -30, 30), y: WORLD_H + rf(rng, 30, 110), r: rf(rng, 10, 14) });
-  // Beach umbrellas + towels, two lifeguard towers, and the marina with its
-  // lighthouse at the east end of the bay (all drawn in render.js).
+  // Beach umbrellas + towels and two lifeguard towers; the marina with its
+  // lighthouse sits at the east end of the bay (all drawn in render.js).
   const umbrellas = [];
   for (let k = 0; k < 14; k++) {
     umbrellas.push({ x: 120 + k * 200 + rf(rng, -50, 50), y: WORLD_H + rf(rng, 50, 130), color: pick(rng, ['#e74c3c', '#f39c12', '#3498db', '#e91e63', '#1abc9c']) });
@@ -114,7 +115,8 @@ export function buildCity(seed) {
 }
 
 function mkBuilding(rng, x, y, w, h, tall = 1) {
-  // hgt 1..5: extrusion/shadow height. Downtown towers reach 4-5, edges 1-2.
+  // hgt 1..5: extrusion/shadow height class. Downtown towers reach 4-5, the
+  // mid-ring 2-3, and the edges stay 1-2.
   const hgt = tall >= 3 ? ri(rng, 3, 5) : tall === 2 ? ri(rng, 2, 3) : ri(rng, 1, 2);
   return {
     x, y, w, h,
@@ -122,7 +124,7 @@ function mkBuilding(rng, x, y, w, h, tall = 1) {
     roof: pick(rng, PAL.roof),
     hgt,
     windows: ri(rng, 2, 5),
-    // Per-building window lit pattern seed (so night windows differ per tower).
+    // Per-building seed for which windows glow at night, so towers differ.
     litSeed: Math.floor(rng() * 1e9),
   };
 }

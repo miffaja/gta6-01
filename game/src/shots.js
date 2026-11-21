@@ -9,20 +9,22 @@ const STEP = 1 / 30;
 
 function fakeInput() {
   return {
-    keys: {}, mouse: { x: 640, y: 360, down: false, clicked: false, wx: 0, wy: 0 },
+    keys: {}, mouse: { x: 640, y: 360, down: false, clicked: false, wx: 0, wy: 0, wheel: 0 },
     axis() {
       const k = this.keys;
       return { x: (k.d ? 1 : 0) - (k.a ? 1 : 0), y: (k.s ? 1 : 0) - (k.w ? 1 : 0) };
     },
     pressed() { return false; },
     consumeClick() { return false; },
+    consumeWheel() { return 0; },
     endFrame() {},
   };
 }
 function nullAudio() {
   return {
-    engine() {}, siren() {}, shot() {}, crash() {}, horn() {}, click() {}, pickup() {},
-    cash() {}, pass() {}, fail() {}, bust() {}, wasted() {}, init() {}, startMusic() {},
+    engine() {}, siren() {}, shot() {}, crash() {}, horn() {}, hornBig() {}, stunt() {},
+    click() {}, pickup() {}, cash() {}, pass() {}, fail() {}, bust() {}, wasted() {},
+    init() {}, startMusic() {},
   };
 }
 function runSteps(world, seconds, input) {

@@ -12,6 +12,14 @@ export function mulberry32(seed) {
 export function ri(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)); }
 export function rf(rng, lo, hi) { return lo + rng() * (hi - lo); }
 export function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+// Weighted pick: entries are [value, weight] pairs (traffic mix, loot tables).
+export function pickWeighted(rng, pairs) {
+  let total = 0;
+  for (const [, w] of pairs) total += w;
+  let roll = rng() * total;
+  for (const [v, w] of pairs) { roll -= w; if (roll <= 0) return v; }
+  return pairs[pairs.length - 1][0];
+}
 export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 export function lerp(a, b, t) { return a + (b - a) * t; }
 export function dist2(ax, ay, bx, by) { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; }

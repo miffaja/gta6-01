@@ -1,13 +1,15 @@
 // SOLMAR BAY — the world: player, cars, traffic, pedestrians, police, wanted system,
 // missions, combat, particles, day/night, weather, save/load. All original.
+// Eight story jobs, three weapons, body armor, rival-crew cars at high heat,
+// Rosa's Garage (repair + respray), a safehouse, stunt ramps and side jobs.
 import {
   SEED, WORLD_W, WORLD_H, BEACH_H, PLAYER_R, PLAYER_SPEED, PLAYER_SPRINT, PLAYER_HEALTH,
   CAR_W, CAR_L, CAR_ACCEL, CAR_BRAKE, CAR_REVERSE, CAR_MAX, CAR_MAX_REVERSE, CAR_TURN,
-  TRAFFIC_COUNT, PED_COUNT, TRAFFIC_SPEED, WANTED_MAX, WANTED_DECAY, WANTED_SEEN_DECAY,
+  TRAFFIC_COUNT, PED_COUNT, TRAFFIC_SPEED, WANTED_MAX, WANTED_DECAY, WANTED_SEEN_DECAY, POLICE_RAM,
   PISTOL_DAMAGE, PISTOL_RANGE, PISTOL_RATE, ENEMY_HEALTH, START_CASH, BUST_FINE, WASTE_FINE,
   SAVE_KEY, DAY_LENGTH, PAL, WEAPONS, WEAPON_ORDER, ARMOR_MAX, VEHICLES,
 } from './config.js';
-import { mulberry32, ri, rf, pick, clamp, lerp, dist, dist2, angTo, angDiff, turnToward } from './random.js';
+import { mulberry32, ri, rf, pick, pickWeighted, clamp, lerp, dist, dist2, angTo, angDiff, turnToward } from './random.js';
 import { buildCity, onRoad, inBuilding, inWater, nearestNode, roadPoint } from './city.js';
 
 export const MISSIONS = [
@@ -54,7 +56,7 @@ export class World {
     this.particles = []; this.skids = []; this.pickups = [];
     this.mission = { index: 0, stage: 0, timer: 0, data: {}, done: false, failed: false };
     this.storyDone = false; this.jobsDone = 0;
-    this.job = null; // free-roam taxi fare / delivery
+    this.job = null; // free-roam taxi fare / parcel delivery
     this.shopT = 0;  // garage repair/respray cooldown
     this.safeT = 0;  // safehouse heal cooldown
     this.rivalT = 0; // rival-crew spawn timer at high wanted
@@ -67,8 +69,9 @@ export class World {
     this.seedPickups();
     this.setObjective();
   }
-  // A few useful things lying around the city: an SMG by the docks, a shotgun
-  // near the precinct, body armor at the marina, ammo + health at landmarks.
+  // Useful things lying around the city: an SMG by the docks, a shotgun near
+  // the precinct, body armor at the marina and the safehouse, ammo + health
+  // at the garage and the hospital.
   seedPickups() {
     const c = this.city;
     this.pickups.push(
@@ -87,9 +90,10 @@ export class World {
   addTrafficCar(anywhere) {
     const rng = this.rng;
     const p = roadPoint(rng, this.city);
-    const roll = rng();
-    const kind = roll < 0.10 ? 'taxi' : roll < 0.24 ? 'sport' : roll < 0.36 ? 'van'
-      : roll < 0.46 ? 'pickup' : roll < 0.53 ? 'truck' : roll < 0.58 ? 'bus' : 'sedan';
+    const kind = pickWeighted(rng, [
+      ['taxi', 10], ['sport', 14], ['van', 12], ['pickup', 10],
+      ['truck', 7], ['bus', 5], ['sedan', 42],
+    ]);
     const spec = VEHICLES[kind] || VEHICLES.sedan;
     const car = {
       id: carId++, x: p.x, y: p.y, a: rng() < 0.5 ? 0 : Math.PI / 2, speed: rf(rng, 60, TRAFFIC_SPEED),
@@ -337,6 +341,7 @@ export class World {
       if (!s) return false;
       this.player.cash = s.cash; this.player.x = s.x; this.player.y = s.y;
       this.player.hp = s.hp; this.player.ammo = s.ammo; this.timeH = s.timeH;
+      // Newer fields are optional: an older save simply keeps the defaults.
       if (s.weapon && WEAPONS[s.weapon]) this.player.weapon = s.weapon;
       if (typeof s.armor === 'number') this.player.armor = s.armor;
       if (s.weapons) this.player.weapons = s.weapons;
@@ -385,9 +390,11 @@ World.prototype.update = function (dt, input, audio) {
   this.cam.y = lerp(this.cam.y, focus.y, 1 - Math.pow(0.001, dt));
   this.cam.zoom = lerp(this.cam.zoom, tz, 1 - Math.pow(0.01, dt));
   if (this.cam.shake > 0) this.cam.shake = Math.max(0, this.cam.shake - dt * 3);
-  // Engine + siren audio.
+  // Engine + siren audio (engine pitch follows the vehicle: sports rev higher,
+  // trucks and buses rumble lower).
   const driving = !p.onFoot && p.car;
-  audio.engine(driving ? Math.abs(p.car.speed) / CAR_MAX : 0, !!driving);
+  const pitch = driving ? (p.car.kind === 'sport' ? 1.25 : p.car.kind === 'truck' || p.car.kind === 'bus' ? 0.7 : 1) : 1;
+  audio.engine(driving ? Math.abs(p.car.speed) / CAR_MAX : 0, !!driving, pitch);
   audio.siren(this.cars.some(c => c.kind === 'police' && dist(c.x, c.y, p.x, p.y) < 700), dt);
   if (this.time % 1 < dt) this.saveGame();
 };
@@ -413,13 +420,17 @@ World.prototype.updatePlayer = function (dt, input, audio) {
   }
   // Aim at the mouse (world coords are set by main.js each frame).
   p.aim = Math.atan2(input.mouse.wy - p.y, input.mouse.wx - p.x);
-  // Weapon switching (1/2/3 or Q to cycle).
+  // Weapon switching: 1/2/3 directly, Q or the mouse wheel to cycle.
   if (input.pressed('1')) this.switchWeapon('pistol', audio);
   else if (input.pressed('2')) this.switchWeapon('smg', audio);
   else if (input.pressed('3')) this.switchWeapon('shotgun', audio);
   else if (input.pressed('q')) {
     const i = WEAPON_ORDER.indexOf(p.weapon);
     this.switchWeapon(WEAPON_ORDER[(i + 1) % WEAPON_ORDER.length], audio);
+  } else if (input.mouse.wheel) {
+    const i = WEAPON_ORDER.indexOf(p.weapon);
+    const step = Math.sign(input.mouse.wheel);
+    this.switchWeapon(WEAPON_ORDER[(i + step + WEAPON_ORDER.length) % WEAPON_ORDER.length], audio);
   }
   // Shoot (weapon-aware: rate, damage, range, pellets + spread).
   const w = WEAPONS[p.weapon] || WEAPONS.pistol;
@@ -431,7 +442,7 @@ World.prototype.updatePlayer = function (dt, input, audio) {
       const spread = w.spread ? (this.rng() * 2 - 1) * w.spread : 0;
       this.fireBullet(p.x, p.y, p.aim + spread, true, w.damage, w.range);
     }
-    // Muzzle flash + ejected shell casing.
+    // Muzzle flash + an ejected shell casing arcing off to the side.
     this.burst(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16, '#ffd76a', 4, 90);
     this.particles.push({
       x: p.x + Math.cos(p.aim + 1.2) * 10, y: p.y + Math.sin(p.aim + 1.2) * 10,
@@ -568,7 +579,7 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
       if (dist2(nx, ny, rp.x, rp.y) < 30 * 30) {
         car.air = clamp(Math.abs(car.speed) / 700, 0.35, 0.9);
         car.airTime = car.air;
-        audio.horn();
+        if (audio.stunt) audio.stunt(); else audio.horn();
         break;
       }
     }
@@ -633,7 +644,10 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
     car.hp = 0; car.driver = null;
   }
   if (input.pressed('e')) this.exitCar(audio);
-  if (input.pressed('h')) { audio.horn(); this.hornT = 0.3; }
+  if (input.pressed('h')) {
+    if ((car.kind === 'truck' || car.kind === 'bus') && audio.hornBig) audio.hornBig(); else audio.horn();
+    this.hornT = 0.3;
+  }
   p.x = car.x; p.y = car.y; p.a = car.a;
 };
 
@@ -724,7 +738,10 @@ World.prototype.updateTraffic = function (dt, audio) {
     // Honk when stuck behind someone for a while.
     if (gap < 52 && Math.abs(c.speed) < 8) {
       c.honkT = (c.honkT || 0) + dt;
-      if (c.honkT > 2.2 && audio && dist(c.x, c.y, p.x, p.y) < 500) { audio.horn(); c.honkT = 0; }
+      if (c.honkT > 2.2 && audio && dist(c.x, c.y, p.x, p.y) < 500) {
+        if ((c.kind === 'truck' || c.kind === 'bus') && audio.hornBig) audio.hornBig(); else audio.horn();
+        c.honkT = 0;
+      }
     } else c.honkT = 0;
     const nx = c.x + Math.cos(c.a) * c.speed * dt, ny = c.y + Math.sin(c.a) * c.speed * dt;
     if (!inBuilding(this.city, nx, ny, 14) && !inWater(this.city, nx, ny)) { c.x = nx; c.y = ny; }
@@ -793,7 +810,7 @@ World.prototype.updatePolice = function (dt, audio) {
   if (have < want && this.rng() < dt * 1.2) {
     const spot = roadPoint(this.rng, this.city);
     if (dist(spot.x, spot.y, p.x, p.y) > 500) {
-      const car = { id: carId++, x: spot.x, y: spot.y, a: 0, speed: 0, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 120, stuck: 0 };
+      const car = { id: carId++, x: spot.x, y: spot.y, a: 0, speed: 0, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
       this.planRoute(car, false);
       this.cars.push(car);
     }

@@ -1,6 +1,8 @@
 // SOLMAR BAY — rendering: the city, the cars, the people, the HUD with its minimap,
 // the day/night light, the rain, and the title / pause / busted / wasted screens.
-// All art is drawn in code (canvas vector shapes): no image assets, no network.
+// Buildings are pseudo-3D (extruded walls, drop shadows, lit windows at night);
+// cars are drawn per kind with wheels, windows and working lights. All art is
+// drawn in code (canvas vector shapes): no image assets, no network.
 import { WORLD_W, WORLD_H, BEACH_H, STREET, BLOCK, PITCH, CAR_W, CAR_L, PLAYER_R, PAL, VEHICLES, WEAPONS } from './config.js';
 import { clamp, lerp } from './random.js';
 import { MISSIONS } from './world.js';

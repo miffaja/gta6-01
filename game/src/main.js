@@ -20,6 +20,7 @@ window.__solmar = { world, input };
 let view = { w: 0, h: 0 };
 let last = performance.now();
 let pausedFromTitle = false;
+let lastWeapon = world.player.weapon;
 
 function resize() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -76,6 +77,11 @@ function frame(now) {
     // Frozen world behind the overlay; the world's own timer brings back 'play'.
   }
   draw(ctx, world, view);
+  // Announce weapon switches on the (screen-reader) status line.
+  if (world.screen === 'play' && world.player.weapon !== lastWeapon) {
+    lastWeapon = world.player.weapon;
+    setStatus(`Weapon: ${lastWeapon}`);
+  }
   input.endFrame();
   requestAnimationFrame(frame);
 }
