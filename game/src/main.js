@@ -1,5 +1,10 @@
-// SOLMAR BAY — boot + game loop. Serves the title screen, the pause, the save, and
-// the ?shot= staging used for the entry's screenshots (see shots.js).
+// SOLMAR BAY — main.js
+// Boot + game loop: builds the World, wires input/audio/canvas, runs the
+// fixed-step update + draw, and handles title/pause/save keys plus the
+// ?shot= screenshot staging (see shots.js).
+// Exports: none — this is the entry point loaded by game/index.html.
+// Dependencies: world.js (World), render.js (draw), input.js (Input),
+// audio.js (AudioSys), shots.js (stageShot).
 import { World } from './world.js';
 import { draw } from './render.js';
 import { Input } from './input.js';
@@ -54,10 +59,13 @@ function frame(now) {
   input.mouse.wx = cam.x + (input.mouse.x - view.w / 2) / cam.zoom;
   input.mouse.wy = cam.y + (input.mouse.y - view.h / 2) / cam.zoom;
   if (world.screen === 'title') {
-    // Slow pan over the city behind the title.
+    // Live-city backdrop: a gentle sinusoidal drift over the downtown
+    // skyline behind the title (world.update never runs on this screen, so
+    // the drift lives here and cannot disturb the play loop).
     world.time += dt;
-    world.cam.x += 12 * dt; world.cam.y += 4 * dt;
-    if (world.cam.x > 2200) world.cam.x = 600;
+    world.cam.x = world.city.roads.v[5] + Math.sin(world.time * 0.08) * 160;
+    world.cam.y = world.city.roads.h[3] + Math.cos(world.time * 0.05) * 80;
+    world.cam.zoom = 0.85;
     if (input.pressed('enter') || input.consumeClick()) startGame(true);
   } else if (world.screen === 'play') {
     if (input.pressed('p') || input.pressed('escape')) {

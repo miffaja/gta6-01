@@ -1,7 +1,12 @@
-// SOLMAR BAY — an original open-world crime game. All city, characters, vehicles,
-// names, story, art and sound are the entrant's own. No Rockstar Games name, logo,
+// SOLMAR BAY — config.js
+// An original open-world crime game: all city, characters, vehicles, names,
+// story, art and sound are the entrant's own. No Rockstar Games name, logo,
 // character, map or asset appears anywhere in this game.
-// Config: the world, the rules, the tuning.
+// The world, the rules, the tuning: grid dimensions, player/car physics,
+// wanted/combat constants, the WEAPONS + VEHICLES tables, and the PAL palette.
+// Exports: SEED, WORLD_W/H, BEACH_H, PITCH, PLAYER_*, CAR_*, WEAPONS,
+// WEAPON_ORDER, ARMOR_MAX, VEHICLES, PAL, SAVE_KEY, DAY_LENGTH, SHOT_NAMES.
+// Dependencies: none — every other module reads from here.
 export const SEED = 20261119;
 export const TILE = 1;
 // City grid: blocks of BLOCK with STREET-wide roads between them.

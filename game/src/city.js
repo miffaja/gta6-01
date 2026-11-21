@@ -1,8 +1,17 @@
-// The city of Solmar Bay: a seeded grid of streets and blocks, with a beach and bay to
-// the south, a container port to the east, and the story landmarks (garage, safehouse,
-// docks, hospital, precinct). Traffic drives the road graph; pedestrians walk sidewalks.
+// SOLMAR BAY — city.js
+// Builds the seeded city: street grid + blocks, beach and bay to the south,
+// container port to the east, story landmarks (garage, safehouse, docks,
+// hospital, precinct, marina, lighthouse), and the traffic road graph.
+// Exports: buildCity, roadCenterX/Y, blockXY, onRoad, inBuilding, inWater,
+// nearestNode, roadPoint.
+// Dependencies: config.js (grid + PAL), random.js (mulberry32, ri, rf, pick).
 import { COLS, ROWS, BLOCK, STREET, PITCH, WORLD_W, WORLD_H, BEACH_H, PAL } from './config.js';
 import { mulberry32, ri, rf, pick } from './random.js';
+
+// Neon signage: a few downtown towers carry a glowing sign at night (drawn in
+// render.js). Text + colour are picked per building from its litSeed.
+const NEON_TEXTS = ['BAR', 'MOTEL', 'CLUB', 'DINER', 'LOANS', 'HOTEL'];
+const NEON_COLORS = ['#ff3366', '#33ffcc', '#ff9900', '#cc00ff', '#00ccff'];
 
 export function roadCenterX(i) { return i * PITCH + STREET / 2; }
 export function roadCenterY(j) { return j * PITCH + STREET / 2; }
@@ -43,6 +52,13 @@ export function buildCity(seed) {
           else b.buildings.push(mkBuilding(rng, x + 12 + k * (BLOCK / n), y + 14, BLOCK / n - 22, BLOCK - 28, tall));
         }
       }
+      // A bench or two on the south sidewalk of some blocks (derived from the
+      // first building's litSeed — no extra rng draws, layout unchanged).
+      const seed0 = b.buildings.length ? b.buildings[0].litSeed : 0;
+      if (seed0 % 3 === 0) {
+        b.benches = [{ x: x + 26 + (seed0 % 110), y: y + BLOCK - 12 }];
+        if (seed0 % 9 === 0) b.benches.push({ x: x + 60 + (seed0 % 80), y: y + 6 });
+      }
     } else if (kind === 1) {
       for (let k = 0; k < ri(rng, 5, 9); k++) {
         b.trees.push({ x: x + rf(rng, 24, BLOCK - 24), y: y + rf(rng, 24, BLOCK - 24), r: rf(rng, 9, 15) });
@@ -54,6 +70,15 @@ export function buildCity(seed) {
         { x: x + BLOCK - 10, y: y + BLOCK / 2 },
       ];
       b.fountain = { x: x + BLOCK / 2, y: y + BLOCK / 2, r: 16 };
+      // Four benches around the fountain plaza (pure decoration, drawn in
+      // render.js; positions derived from the fountain, no rng draws).
+      const fo = b.fountain.r + 20;
+      b.benches = [
+        { x: b.fountain.x - 11, y: b.fountain.y - fo },
+        { x: b.fountain.x - 11, y: b.fountain.y + fo - 6 },
+        { x: b.fountain.x - fo, y: b.fountain.y - 3 },
+        { x: b.fountain.x + fo - 22, y: b.fountain.y - 3 },
+      ];
     } else if (kind === 2) {
       for (let k = 0; k < ri(rng, 3, 6); k++) {
         b.cars.push({ x: x + rf(rng, 30, BLOCK - 30), y: y + rf(rng, 30, BLOCK - 30), a: rng() < 0.5 ? 0 : Math.PI / 2, color: pick(rng, PAL.car) });
@@ -105,9 +130,30 @@ export function buildCity(seed) {
     { x: roadCenterX(2), y: roadCenterY(5) + 120, a: Math.PI / 2 },
     { x: roadCenterX(9) + 140, y: roadCenterY(2), a: 0 },
   ];
+  // Street props (pure decoration, drawn in render.js): advertising
+  // billboards on some intersection corners and bus-stop shelters along the
+  // avenues. Placement is index-derived — no rng draws, so the seeded layout
+  // above is untouched. All brand names are original inventions.
+  const BB_TEXTS = ['SOLMAR COLA', "VIC'S MOTORS", 'MARINA INN', 'BAYSIDE BAIL BONDS', 'RAD WHEELS', 'SUN KING BEER', 'PALMA REALTY', 'DOCKS & SONS'];
+  const BB_COLORS = ['#c0392b', '#2980b9', '#f39c12', '#27ae60', '#8e44ad'];
+  const billboards = [];
+  for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
+    if ((i * 7 + j * 13) % 5 !== 0) continue; // ~20% of corners
+    billboards.push({
+      x: roads.v[i] + STREET / 2 + 4, y: roads.h[j] + STREET / 2 + 4, w: 60, h: 38,
+      text: BB_TEXTS[(i * 7 + j * 3) % BB_TEXTS.length],
+      color: BB_COLORS[(i * 3 + j * 5) % BB_COLORS.length],
+    });
+  }
+  const busStops = [];
+  for (let i = 0; i <= COLS; i++) for (let j = 0; j < ROWS; j++) {
+    if ((i * 3 + j) % 6 !== 0) continue; // ~19 shelters city-wide
+    busStops.push({ x: roads.v[i] + STREET / 2 + 8, y: roads.h[j] + PITCH / 2 });
+  }
   return {
     seed, roads, nodes, nodeAt, blocks, garage, safehouse, docks, hospital, precinct, pier,
     containers, palms, umbrellas, lifeguards, marina, lighthouse, boats, ramps,
+    billboards, busStops,
     beach: { y0: WORLD_H, y1: WORLD_H + BEACH_H },
     // Spawn ON the road south of the garage intersection (never inside a block).
     spawn: { x: garage.x, y: garage.y + 70 },
@@ -118,7 +164,7 @@ function mkBuilding(rng, x, y, w, h, tall = 1) {
   // hgt 1..5: extrusion/shadow height class. Downtown towers reach 4-5, the
   // mid-ring 2-3, and the edges stay 1-2.
   const hgt = tall >= 3 ? ri(rng, 3, 5) : tall === 2 ? ri(rng, 2, 3) : ri(rng, 1, 2);
-  return {
+  const bd = {
     x, y, w, h,
     color: pick(rng, PAL.building),
     roof: pick(rng, PAL.roof),
@@ -127,6 +173,18 @@ function mkBuilding(rng, x, y, w, h, tall = 1) {
     // Per-building seed for which windows glow at night, so towers differ.
     litSeed: Math.floor(rng() * 1e9),
   };
+  // Neon sign metadata: only tall towers in the downtown core (the middle
+  // band of the map — wider east-west, matching the tower ring), and about
+  // one in two of those. Derived from litSeed, so the seeded layout is
+  // unchanged (no extra rng draws).
+  const cx = x + w / 2, cy = y + h / 2;
+  const downtown = cx > WORLD_W * 0.25 && cx < WORLD_W * 0.75 && cy > WORLD_H * 0.3 && cy < WORLD_H * 0.7;
+  if (downtown && hgt >= 3 && bd.litSeed % 2 === 0) {
+    bd.neon = true;
+    bd.neonText = NEON_TEXTS[bd.litSeed % NEON_TEXTS.length];
+    bd.neonColor = NEON_COLORS[bd.litSeed % NEON_COLORS.length];
+  }
+  return bd;
 }
 
 // Is (x,y) on a road (within the road half-width of a centre line)?

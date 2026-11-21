@@ -1,7 +1,12 @@
-// SOLMAR BAY — the world: player, cars, traffic, pedestrians, police, wanted system,
-// missions, combat, particles, day/night, weather, save/load. All original.
+// SOLMAR BAY — world.js
+// The world simulation: player, cars, traffic, pedestrians, police, the
+// wanted system, missions, combat, particles, day/night, weather, save/load.
 // Eight story jobs, three weapons, body armor, rival-crew cars at high heat,
-// Rosa's Garage (repair + respray), a safehouse, stunt ramps and side jobs.
+// Rosa's Garage (repair + respray), a safehouse, stunt ramps, side jobs, and
+// 20 collectible postcards. All original.
+// Exports: World class (update + per-system update prototypes), MISSIONS.
+// Dependencies: config.js (all tuning + WEAPONS/VEHICLES/PAL), random.js
+// (seeded RNG + geometry helpers), city.js (buildCity + collision queries).
 import {
   SEED, WORLD_W, WORLD_H, BEACH_H, PLAYER_R, PLAYER_SPEED, PLAYER_SPRINT, PLAYER_HEALTH,
   CAR_W, CAR_L, CAR_ACCEL, CAR_BRAKE, CAR_REVERSE, CAR_MAX, CAR_MAX_REVERSE, CAR_TURN,
@@ -32,6 +37,16 @@ export const MISSIONS = [
 ];
 
 let carId = 1;
+// Collectible postcards: 20 hidden spots on the road grid ([colIdx, rowIdx, dx,
+// dy] against city.roads) — 5 along the beach/marina south edge, 5 downtown,
+// 5 in the mid-ring, 5 on the outskirts. Offsets stay within the road's
+// half-width so a card never lands inside a building.
+const POSTCARD_SPOTS = [
+  [2, 9, 0, 10], [4, 9, 12, 0], [6, 9, -10, 8], [8, 9, 0, 12], [10, 9, 8, 0],
+  [5, 4, 10, 0], [6, 4, -12, 6], [7, 5, 8, -8], [5, 5, 0, 12], [7, 4, 14, 4],
+  [3, 3, 0, 10], [9, 3, -10, 0], [3, 6, 8, -6], [9, 6, 0, 8], [6, 2, 12, 0],
+  [1, 1, 0, 0], [11, 1, 10, 8], [1, 8, -8, 10], [11, 8, 0, -10], [0, 5, 12, 0],
+];
 export class World {
   constructor(seed = SEED) {
     this.seed = seed;
@@ -41,6 +56,8 @@ export class World {
   }
   reset() {
     const c = this.city;
+    // Each marina boat bobs out of phase with the others (render.js reads this).
+    for (const bt of c.boats) bt.bobOffset = this.rng() * Math.PI * 2;
     this.screen = 'title';
     this.time = 0; this.timeH = 10; this.rain = 0; this.rainT = 30;
     this.shotMode = false; // staged screenshots never write to localStorage
@@ -58,15 +75,23 @@ export class World {
     this.storyDone = false; this.jobsDone = 0;
     this.job = null; // free-roam taxi fare / parcel delivery
     this.shopT = 0;  // garage repair/respray cooldown
+    this.upgradeT = 0; // garage upgrade-purchase cooldown
     this.safeT = 0;  // safehouse heal cooldown
     this.rivalT = 0; // rival-crew spawn timer at high wanted
     this.cam = { x: this.player.x, y: this.player.y, zoom: 1, shake: 0 };
-    this.msg = null; this.msgT = 0;
+    this.msg = null; this.msgT = 0; this.msgDur = 0;
+    this.wantedFlash = 0; // pulses the newest wanted star when heat rises
+    this.textPops = [];   // floating "+$400" cash popups
     this.shootT = 0; this.hornT = 0;
     this.stats = { stolen: 0, busted: 0, wasted: 0, kills: 0, missions: 0 };
     this.spawnTraffic(); this.spawnPeds();
     this.spawnParkedCars();
     this.seedPickups();
+    // Postcards start unfound; a save restores the found flags (loadSave).
+    this.postcards = POSTCARD_SPOTS.map(([ci, rj, dx, dy]) => ({
+      x: c.roads.v[ci] + dx, y: c.roads.h[rj] + dy, found: false,
+    }));
+    this.postcardsFound = 0;
     this.setObjective();
   }
   // Useful things lying around the city: an SMG by the docks, a shotgun near
@@ -209,11 +234,16 @@ export class World {
       else { this.objective = 'Final drop — the docks'; this.marker = { x: c.docks.x - 60, y: c.docks.y, r: 48 }; }
     }
   }
-  showMsg(title, sub = '', dur = 3) { this.msg = { title, sub }; this.msgT = dur; }
+  showMsg(title, sub = '', dur = 3) { this.msg = { title, sub }; this.msgT = dur; this.msgDur = dur; }
+  // Floating cash text that rises and fades (drawn in render.js).
+  popText(x, y, text, color) {
+    this.textPops.push({ x, y, vy: -80, text, color: color || '#2ecc71', life: 1.4, max: 1.4 });
+  }
   missionPassed() {
     const def = MISSIONS[this.mission.index];
     this.player.cash += def.reward;
     this.stats.missions++;
+    this.popText(this.player.x, this.player.y - 20, '+$' + def.reward, '#ffd23e');
     this.showMsg('MISSION PASSED', `${def.name}  •  +$${def.reward}`, 3.5);
     this.mission.done = true;
     this.saveGame();
@@ -320,6 +350,7 @@ export class World {
   addWanted(n, reason) {
     if (this.wanted >= WANTED_MAX) return;
     this.wanted = clamp(this.wanted + n, 0, WANTED_MAX);
+    this.wantedFlash = 0.6;
   }
   policeCount() { return [0, 1, 2, 3, 4, 5][this.stars()]; }
   // ---------- save / load ----------
@@ -331,6 +362,7 @@ export class World {
         x: this.player.x, y: this.player.y, hp: this.player.hp, ammo: this.player.ammo,
         timeH: this.timeH, storyDone: this.storyDone, jobsDone: this.jobsDone,
         weapon: this.player.weapon, armor: this.player.armor, weapons: this.player.weapons,
+        postcards: this.postcards.map(pc => pc.found),
       }));
     } catch { /* storage unavailable */ }
   }
@@ -346,6 +378,10 @@ export class World {
       if (typeof s.armor === 'number') this.player.armor = s.armor;
       if (s.weapons) this.player.weapons = s.weapons;
       if (this.player.weapons[this.player.weapon]) this.player.weapons[this.player.weapon].ammo = s.ammo;
+      if (Array.isArray(s.postcards)) {
+        for (let i = 0; i < this.postcards.length && i < s.postcards.length; i++) this.postcards[i].found = !!s.postcards[i];
+        this.postcardsFound = this.postcards.filter(pc => pc.found).length;
+      }
       this.storyDone = !!s.storyDone; this.jobsDone = s.jobsDone || 0;
       this.mission.index = Math.min(s.mission, MISSIONS.length - 1);
       this.mission.stage = s.stage || 0; this.mission.done = false; this.mission.data = {};
@@ -368,6 +404,7 @@ World.prototype.update = function (dt, input, audio) {
   this.rainT -= dt;
   if (this.rainT <= 0) { this.rainT = 45 + this.rng() * 45; this.rain = this.rng() < 0.3 ? 1 : 0; }
   if (this.msgT > 0) this.msgT -= dt;
+  if (this.wantedFlash > 0) this.wantedFlash -= dt;
   this.shootT -= dt;
   const p = this.player;
   if (p.invuln > 0) p.invuln -= dt;
@@ -461,7 +498,7 @@ World.prototype.updatePlayer = function (dt, input, audio) {
   for (const pk of this.pickups) {
     if (!pk.taken && dist2(p.x, p.y, pk.x, pk.y) < 36 * 36) {
       pk.taken = true;
-      if (pk.kind === 'cash') { p.cash += pk.amount; audio.cash(); this.showMsg(`+$${pk.amount}`, '', 1.2); }
+      if (pk.kind === 'cash') { p.cash += pk.amount; audio.cash(); this.popText(pk.x, pk.y, '+$' + pk.amount); this.showMsg(`+$${pk.amount}`, '', 1.2); }
       else if (pk.kind === 'health') { p.hp = Math.min(PLAYER_HEALTH, p.hp + 40); audio.pickup(); this.showMsg('+40 HEALTH', '', 1.2); }
       else if (pk.kind === 'armor') { p.armor = ARMOR_MAX; audio.pickup(); this.showMsg('BODY ARMOR', 'Soaks up damage first', 1.5); }
       else if (pk.kind === 'weapon') {
@@ -476,6 +513,23 @@ World.prototype.updatePlayer = function (dt, input, audio) {
         if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = p.ammo;
         audio.pickup(); this.showMsg('+12 AMMO', '', 1.2);
       }
+    }
+  }
+  // Collect a hidden postcard by walking over it ($100 each, $1000 for all 20).
+  for (const pc of this.postcards) {
+    if (!pc.found && dist2(p.x, p.y, pc.x, pc.y) < 32 * 32) {
+      pc.found = true;
+      this.postcardsFound++;
+      p.cash += 100;
+      this.popText(pc.x, pc.y, '+$100', '#f39c12');
+      this.showMsg(`POSTCARD ${this.postcardsFound}/20`, 'Solmar Bay collection!', 1.8);
+      audio.pickup();
+      if (this.postcardsFound === 20) {
+        p.cash += 1000;
+        this.showMsg('COLLECTION COMPLETE', 'All 20 postcards — +$1000 bonus!', 4);
+      }
+      this.saveGame();
+      break;
     }
   }
 };
@@ -568,7 +622,9 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
   } else if (ax.y < 0) car.speed += spec.accel * dt;
   else if (ax.y > 0) { car.speed -= (car.speed > 10 ? CAR_BRAKE : CAR_REVERSE) * dt; car.brakeLight = 0.2; }
   else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 140 * dt);
-  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, spec.max);
+  // A Rosa's Garage engine tune raises this car's top speed by 15%.
+  const topSpeed = spec.max * (car.upgrades && car.upgrades.engine ? 1.15 : 1);
+  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, topSpeed);
   const steer = ax.x * spec.turn * clamp(Math.abs(car.speed) / 160, 0.15, 1) * (car.speed < 0 ? -1 : 1);
   if (car.air <= 0) car.a += steer * dt * (input.keys[' '] ? 1.6 : 1);
   const nx = car.x + Math.cos(car.a) * car.speed * dt;
@@ -926,13 +982,16 @@ World.prototype.updateRivals = function (dt) {
 World.prototype.updateServices = function (dt, audio) {
   const p = this.player, c = this.city;
   if (this.shopT > 0) this.shopT -= dt;
+  if (this.upgradeT > 0) this.upgradeT -= dt;
   if (this.safeT > 0) this.safeT -= dt;
   // Garage: in a car, near the marker, damaged or wanted → $100 fix.
   if (!p.onFoot && p.car && this.shopT <= 0 && dist2(p.x, p.y, c.garage.x, c.garage.y) < 52 * 52) {
-    const needsFix = p.car.hp < (VEHICLES[p.car.kind] || VEHICLES.sedan).hp || this.wanted > 0;
+    const spec = VEHICLES[p.car.kind] || VEHICLES.sedan;
+    const maxHp = spec.hp + (p.car.upgrades && p.car.upgrades.armor ? 50 : 0);
+    const needsFix = p.car.hp < maxHp || this.wanted > 0;
     if (needsFix && p.cash >= 100) {
       p.cash -= 100;
-      p.car.hp = (VEHICLES[p.car.kind] || VEHICLES.sedan).hp;
+      p.car.hp = maxHp;
       this.wanted = 0;
       this.cars = this.cars.filter(car => car.kind !== 'police');
       this.cops = [];
@@ -940,6 +999,30 @@ World.prototype.updateServices = function (dt, audio) {
       audio.cash();
       this.shopT = 8;
       this.saveGame();
+    }
+  }
+  // Garage upgrades: per-vehicle Engine Tune (+15% top speed, $300) and
+  // Armor Plating (+50 hull, $400), auto-bought in tier order while parked
+  // at Rosa's with a sound car and no heat on. Upgrades live on the car
+  // object only — they are not saved (a fresh car starts stock).
+  if (!p.onFoot && p.car && this.upgradeT <= 0 && dist2(p.x, p.y, c.garage.x, c.garage.y) < 52 * 52) {
+    const car = p.car;
+    if (!car.upgrades) car.upgrades = { engine: 0, armor: 0 };
+    const spec = VEHICLES[car.kind] || VEHICLES.sedan;
+    const sound = car.hp >= spec.hp + (car.upgrades.armor ? 50 : 0) && this.wanted <= 0;
+    if (sound && car.upgrades.engine < 1 && p.cash >= 300) {
+      p.cash -= 300;
+      car.upgrades.engine = 1;
+      this.showMsg('ENGINE TUNE', 'Top speed +15% — $300', 2.5);
+      audio.cash();
+      this.upgradeT = 8;
+    } else if (sound && car.upgrades.armor < 1 && p.cash >= 400) {
+      p.cash -= 400;
+      car.upgrades.armor = 1;
+      car.hp += 50;
+      this.showMsg('ARMOR PLATING', 'Hull +50 — $400', 2.5);
+      audio.cash();
+      this.upgradeT = 8;
     }
   }
   // Safehouse: on foot, near the door → patch up and save.
@@ -1085,6 +1168,9 @@ World.prototype.updateParticles = function (dt) {
     pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 30 * dt;
   }
   this.particles = this.particles.filter(pt => pt.life > 0);
+  // Cash popups float up and decelerate.
+  for (const tp of this.textPops) { tp.life -= dt; tp.y += tp.vy * dt; tp.vy += 40 * dt; }
+  this.textPops = this.textPops.filter(tp => tp.life > 0);
   for (const s of this.skids) s.life -= dt;
   this.skids = this.skids.filter(s => s.life > 0);
   if (this.rain && this.rng() < 0.6) {

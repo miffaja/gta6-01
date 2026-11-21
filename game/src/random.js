@@ -1,5 +1,10 @@
-// Deterministic RNG (mulberry32) + small helpers. The city, traffic and missions all
-// draw from seeded streams so a seed always builds the same Solmar Bay.
+// SOLMAR BAY — random.js
+// Deterministic RNG (mulberry32) + small math helpers. The city, traffic and
+// missions all draw from seeded streams so a seed always builds the same
+// Solmar Bay.
+// Exports: mulberry32, ri, rf, pick, pickWeighted, clamp, lerp, dist, dist2,
+// angTo, angDiff, turnToward.
+// Dependencies: none.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {

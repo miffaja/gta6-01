@@ -1,6 +1,9 @@
-// Keyboard + mouse. WASD/arrows move and drive, mouse aims on foot, click shoots,
-// E enters/exits cars, Space handbrake, Shift sprint, P/Esc pause, M mute, H horn.
-// Weapons: 1 = pistol, 2 = SMG, 3 = shotgun, Q (or the mouse wheel) cycles.
+// SOLMAR BAY — input.js
+// Keyboard + mouse state for the game loop. WASD/arrows move and drive, mouse
+// aims on foot, click shoots, E enters/exits cars, Space handbrake, Shift
+// sprint, P/Esc pause, M mute, H horn; 1/2/3 switch weapons, Q/wheel cycles.
+// Exports: Input class (axis(), pressed(), consumeClick(), consumeWheel()).
+// Dependencies: none (DOM events only); attached by main.js.
 export class Input {
   constructor() {
     this.keys = {};

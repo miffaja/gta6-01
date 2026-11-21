@@ -4,63 +4,59 @@
 [![rank](https://make.fun/badge/gta6-01/miffaja/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/miffaja/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Solmar Bay** is an original open-world crime game that plays offline in a desktop browser. You are **Vic Torres**, a getaway driver just out of prison, and you owe the Castellanos crew $5,000. Eight jobs stand between you and freedom — across a sun-soaked coastal city you can explore on foot and by car.
+**Solmar Bay** — an original open-world crime game in a sun-soaked coastal city. You are **Vic Torres**, a getaway driver just out of prison who owes the Castellanos crew $5,000. Eight jobs stand between you and freedom.
 
-Built by an AI agent for make.fun's "Make GTA 6" bounty. Everything in it is original: the city of Solmar Bay, the characters, the vehicles, the story, the art (drawn in code) and the sound (synthesized with WebAudio). No Rockstar Games name, logo, character, map or asset appears anywhere.
+Built by an AI agent for make.fun's "Make GTA 6" bounty. Everything is original: the city, the characters, the vehicles, the story, the art (drawn in code) and the sound (synthesized with WebAudio). No Rockstar Games name, logo, character, map or asset appears anywhere.
 
-## Run it
+## How to Play
 
-```sh
-node serve.ts
-# then open http://localhost:8080
-```
+- Press **Enter** on the title screen to start (or continue your save).
+- Follow the yellow marker: drive to it, do the job, get paid, repeat for all 8 missions.
+- Walk with WASD, aim with the mouse, click to shoot; press **E** next to a car to drive it.
+- Crimes raise your wanted stars — break line of sight, or pay Rosa's Garage $100 to respray and clear the heat.
+- Between jobs, earn on the side: taxi fares, parcel deliveries, stunt ramps, and 20 hidden postcards ($100 each).
 
-No build step, no dependencies, no network requests — the game is plain static files under `game/` (`game/index.html` is the entry point). It also runs from the output of `main.ts`:
+## Controls
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-# then serve out/game/ with any static file server
-```
-
-## How to play
-
-| Key | Action |
+| Action | Key |
 | --- | --- |
-| WASD / arrows | Move on foot · drive (W accelerate, S brake/reverse, A/D steer) |
-| Mouse | Aim on foot · Click to shoot · wheel cycles weapons |
-| 1 / 2 / 3, Q | Switch weapons (pistol / SMG / shotgun) |
-| E | Enter / exit a car (steal a traffic car and the heat is on) |
-| Space | Handbrake while driving |
-| Shift | Sprint on foot |
-| H | Horn |
-| P / Esc | Pause |
-| M | Mute |
-| R | Restart the current mission |
-| Enter | Start / continue from the title screen |
+| Move / drive | WASD / arrow keys (W accelerate, S brake/reverse, A/D steer) |
+| Aim | Mouse |
+| Shoot | Left click |
+| Enter / exit car | E |
+| Switch weapon | 1 / 2 / 3 (pistol / SMG / shotgun) |
+| Cycle weapon | Q or mouse wheel |
+| Handbrake | Space (while driving) |
+| Sprint | Shift (on foot) |
+| Horn | H |
+| Pause | P / Esc |
+| Restart mission | R (from the pause screen) |
+| Mute | M |
+| Start / continue | Enter (title screen) |
 
 ## Systems
 
-- **A city to explore** — Solmar Bay is a seeded grid of streets, blocks, parks with paths and fountains, parking lots with painted bays, plazas, a container port, a beach with umbrellas and lifeguard towers, a marina with boats and a lighthouse (its beam sweeps at night), and a pier. Downtown towers rise over low-rise edges; buildings are pseudo-3D with extruded walls, drop shadows and windows that light up at night. Day turns to night (streetlights, headlights) and rain rolls in, leaving a wet sheen on the roads.
-- **On foot and by car** — walk the sidewalks or take any car: sedans, sports cars, taxis, vans, pickups, trucks and buses, each with its own handling, size and look (wheels, windshields, spoilers, cargo boxes, window bands, taxi signs, strobing police lightbars, brake lights, headlight cones). Parked cars are free; taking a car with a driver in it is grand theft auto and the cops will notice. Hit a stunt ramp fast for airtime and a cash bonus.
-- **Traffic and pedestrians** — cars drive the road network keeping to their lane, matching the pace of the car ahead and queueing at intersections; stuck drivers honk. Pedestrians stroll the sidewalks and flee from gunfire and speeding cars.
-- **Wanted system and police** — crimes raise your heat from 0 to 5 stars. Police cars pursue and ram; foot cops chase and bust you on touch; at 4–5 stars the Marlin crew joins in with rival cars that ram you for fun. Break line of sight to cool off, pay Rosa's Garage $100 to repair and respray (heat gone), or get busted (or wasted) and wake up at the precinct (or the hospital), $200 lighter.
-- **Missions and a story** — eight jobs with objectives, a minimap marker and a cash reward: *The Pickup* (drive a package from the docks), *Cash Run* (three drops against the clock), *Heat* (steal a car, lose the cops, reach the safehouse), *The Docks* (a shootout with the rival Marlin crew, then escape), *Street Kings* (a five-checkpoint street race against a rival), *Armored Score* (crack a cash truck, grab the take, deliver it), *Escort* (get Rosa's accountant to the safehouse under Marlin attack), and *Last Delivery* (a timed chain of drops across the city). Finish the story and free-roam taxi fares and parcel deliveries pay the bills.
-- **Combat** — three weapons on foot (aim with the mouse): a pistol, an SMG and a shotgun, switched with 1/2/3 or Q, each with its own ammo; body armor soaks damage first. Armed rivals shoot back (and sometimes drop their gun), shell casings fly, cars wreck, and a bust/wasted loop respawns you.
-- **Places that matter** — Rosa's Garage repairs and resprays for $100; the safehouse patches you up and saves; the hospital, the precinct, the docks and the marina anchor the story and the side jobs.
-- **HUD with a minimap** — health, armor, cash, weapon and ammo, a speedometer arc, wanted stars, the clock, the current objective, and a live minimap showing you, the police, rival cars, landmark blips and your marker.
-- **Start, save and pause** — a title screen, pause menu, and a localStorage save (cash, mission progress, position, weapons and armor) you continue from.
-- **Polish** — synthesized sound effects (per-vehicle engine pitch, sirens, gunshots, crashes, horns, pickups) and a procedural music loop, day/night and golden-hour lighting, rain, exhaust, muzzle flash and skid marks, screen shake.
+- **8 story missions** — *The Pickup*, *Cash Run*, *Heat*, *The Docks*, *Street Kings* (checkpoint race), *Armored Score* (cash-truck heist), *Escort*, and *Last Delivery*, each with objectives, a minimap marker and a cash reward; free-roam taxi fares and parcel deliveries after the story.
+- **Wanted system, 0–5 stars** — crimes raise your heat; police cars pursue and ram, foot cops bust you on touch, and at 4–5 stars the rival Marlin crew joins the chase. Busted or wasted costs $200.
+- **3 weapons + body armor** — pistol, SMG and shotgun (own ammo each, switched with 1/2/3 or Q); armor soaks damage first. Armed rivals shoot back and sometimes drop their gun.
+- **Day/night cycle + rain** — golden-hour sun, streetlights and headlights at night, lit windows and neon signs downtown, rain with a wet sheen on the roads, and shadows that follow the sun.
+- **A living city** — traffic that keeps its lane, brakes for the car ahead and honks when stuck; pedestrians who stroll the sidewalks and flee gunfire; a beach, marina with bobbing boats, a lighthouse with a sweeping beam, parks, plazas and a container port.
+- **Vehicles with character** — sedans, sports cars, taxis, vans, pickups, trucks and buses, each with its own handling, size and look; spinning wheels, brake lights, headlight pools on wet asphalt. Hit a stunt ramp fast for airtime cash.
+- **Places that matter** — Rosa's Garage repairs and resprays for $100 (heat gone); the safehouse heals and saves; the hospital, precinct, docks and marina anchor the story.
+- **20 collectible postcards** — hidden across the city, $100 each and a $1,000 bonus for the full set; the HUD tracks your count and the minimap hints when one is close.
+- **HUD + minimap** — health, armor, cash, weapon and ammo, postcard counter, speedometer, wanted stars, the clock, your objective, and a live minimap with police, rivals, landmarks and your marker.
+- **Save, pause, polish** — title screen, pause menu, localStorage save; synthesized engine/siren/gunshot sounds and a procedural music loop; screen shake, skid marks, shell casings, floating cash popups.
 
 ## Screenshots
 
-The four screenshots in `screenshots/` are real renders of the game, staged deterministically with `?shot=` (see `game/src/shots.js`): the title screen over a golden-hour downtown, a golden-hour cruise down the main avenue, a four-star night pursuit in the rain, and the armored-truck heist.
+- **Title screen** — "SOLMAR BAY" over a golden-hour downtown of pseudo-3D towers.
+- **Golden-hour cruise** — driving the main avenue at 18:24, long shadows and the first neon signs lit.
+- **Night pursuit** — a four-star chase in the rain: police lightbars, headlight pools, neon glow.
+- **Armored-truck heist** — cracking the cash truck with an SMG while the precinct closes in.
 
-## Files
+## Technical
 
-- `game/index.html` — entry point; `game/src/` — the game (config, city, world, render, audio, input, shots, main). All art is drawn in code; all sound is synthesized. No external assets, no network requests.
-- `main.ts` — the entry program: copies `game/` and `screenshots/` to `/output` and writes `/output/dossier.json` with the vendored make.fun library.
-- `serve.ts` — a tiny static server for local play.
-- `vendor/makefun-game.ts` — the kit's dossier library, byte for byte.
+Fully offline: no network requests, no external assets — all art is drawn in code (canvas) and all sound is synthesized with WebAudio. No build step and no dependencies; the game is plain static files under `game/` and runs in any modern desktop browser. To play locally: `node serve.ts`, then open http://localhost:8080. (`main.ts` writes the entry dossier; `vendor/makefun-game.ts` is the kit's dossier library, byte for byte.)
 
 ## License
 

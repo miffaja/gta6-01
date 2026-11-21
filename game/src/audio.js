@@ -1,5 +1,8 @@
-// All sound is synthesized with WebAudio: no audio files, no network. Engine hum,
-// sirens, gunshots, crashes, pickups and a small procedural music loop.
+// SOLMAR BAY — audio.js
+// All sound is synthesized with WebAudio (no audio files, no network): engine
+// hum per vehicle kind, sirens, gunshots, crashes, horns, pickups, music loop.
+// Exports: AudioSys class (engine/siren/shot/crash/pickup/cash/horn + mute).
+// Dependencies: none (WebAudio API only); wired by main.js, called from world.js.
 export class AudioSys {
   constructor() {
     this.ctx = null; this.muted = false; this.musicOn = false;
