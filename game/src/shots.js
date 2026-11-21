@@ -66,7 +66,9 @@ export function stageShot(name, world) {
     world.screen = 'play';
     runSteps(world, 2.5, input);
     world.screen = 'title';
-    world.cam.x = roadCenterX(5); world.cam.y = roadCenterY(3); world.cam.zoom = 0.78;
+    // 2.5D framing: wider zoom + a touch south, so the 73px downtown towers
+    // keep sky above their roofs instead of clipping the frame top.
+    world.cam.x = roadCenterX(5); world.cam.y = roadCenterY(3) + 90; world.cam.zoom = 0.72;
     return { screen: 'title' };
   }
   world.screen = 'play';
@@ -95,8 +97,9 @@ export function stageShot(name, world) {
     world.planRoute(bus, true); world.cars.push(bus);
     input.keys.w = true;
     runSteps(world, 2.5, input);
-    // Lookahead framing: the camera sits ahead of the car, not centred on it.
-    world.cam.x = car.x + 180; world.cam.y = car.y;
+    // Lookahead framing: the camera sits ahead of the car, not centred on
+    // it — widened and nudged south for the taller 2.5D towers.
+    world.cam.x = car.x + 180; world.cam.y = car.y + 70; world.cam.zoom = 0.72;
     return { screen: 'play' };
   }
   if (name === 'wanted') {
@@ -163,9 +166,10 @@ export function stageShot(name, world) {
     // Wider framing than the driving default so the whole chase reads, and
     // centred on the neon cluster the chase was staged around. (Set after
     // the steps: update() lerps the camera toward the car while driving,
-    // and shot mode freezes the world right after staging.)
-    world.cam.zoom = 0.72;
-    world.cam.x = ax; world.cam.y = roadY;
+    // and shot mode freezes the world right after staging.) Widened further
+    // + nudged south for the taller 2.5D towers.
+    world.cam.zoom = 0.68;
+    world.cam.x = ax; world.cam.y = roadY + 70;
     return { screen: 'play' };
   }
   // mission: the armored-truck heist at golden hour — Vic on foot with an SMG,

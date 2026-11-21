@@ -1,7 +1,7 @@
 // SOLMAR BAY — render.js
 // All drawing: the city, cars, people, HUD + minimap, day/night lighting,
-// rain, and the title/pause/busted/wasted screens. Buildings are pseudo-3D
-// (extruded walls, sun-tracked shadows, lit windows, neon signs); cars are
+// rain, and the title/pause/busted/wasted screens. Buildings are oblique 2.5D boxes
+// (extruded faces, sun-tracked shadows, lit windows, neon signs); cars are
 // drawn per kind with spinning wheels and working lights. All art is drawn
 // in code (canvas vector shapes): no image assets, no network.
 // Exports: draw(ctx, world, view). Internal: drawWorld, drawLighting,
@@ -134,6 +134,213 @@ function drawPed(ctx, x, y, a, color, enemy, walkPhase = 0) {
   ctx.restore();
 }
 
+// Skyline landmarks, picked once per city (render-only flags on the chosen
+// buildings; deterministic from the seeded layout, no gameplay effect):
+//  - helipad on the flagship tower: an hgt-5 building nearest the map
+//    centre (else the tallest nearest the centre);
+//  - water towers on the tallest remaining downtown towers, the second at
+//    least 500px from the first so they read as separate landmarks.
+function pickLandmarks(city) {
+  if (city._lmPicked) return;
+  city._lmPicked = true;
+  const cx = WORLD_W / 2, cy = WORLD_H / 2;
+  const all = [];
+  for (const b of city.blocks) for (const bd of b.buildings) {
+    const dx = bd.x + bd.w / 2 - cx, dy = bd.y + bd.h / 2 - cy;
+    all.push({ bd, d: dx * dx + dy * dy });
+  }
+  if (!all.length) return;
+  const byHeightThenCentre = (a, b) => (b.bd.hgt - a.bd.hgt) || (a.d - b.d);
+  const fives = all.filter(e => e.bd.hgt === 5).sort((a, b) => a.d - b.d);
+  const flagship = (fives.length ? fives[0] : [...all].sort(byHeightThenCentre)[0]).bd;
+  flagship.helipad = true;
+  const tall = all.filter(e => e.bd !== flagship && e.bd.hgt >= 4).sort(byHeightThenCentre);
+  const picks = [];
+  for (const e of tall) {
+    if (picks.length >= 2) break;
+    if (picks.some(p => {
+      const dx = p.x + p.w / 2 - (e.bd.x + e.bd.w / 2), dy = p.y + p.h / 2 - (e.bd.y + e.bd.h / 2);
+      return dx * dx + dy * dy < 500 * 500;
+    })) continue;
+    picks.push(e.bd);
+  }
+  for (const bd of picks) bd.waterTower = true;
+}
+
+// One building as an oblique 2.5D box: the roof is lifted H px north (and a
+// touch west) off the ground footprint, so the south and east faces show.
+// The faces carry the windows, awning and neon that used to sit on the roof
+// rect; the drop shadow is cast from the roof rect along the sun vector.
+// H is non-linear in the height class so downtown towers (hgt 4-5) stand
+// clearly above the mid-ring in the skyline: 11 / 22 / 39 / 56 / 73 px.
+function bldH(bd) { return bd.hgt <= 2 ? bd.hgt * 11 : 22 + (bd.hgt - 2) * 17; }
+
+function drawBuilding(ctx, bd, world, night, dusk, t) {
+  const H = bldH(bd);                     // extrusion height: 11..73px
+  const ox = -H * 0.32, oy = -H;          // roof offset (oblique projection)
+  const rx = bd.x + ox, ry = bd.y + oy;   // roof top-left corner
+  const by = bd.y + bd.h;                 // footprint south edge
+  // Drop shadow: length + direction follow the sun. Morning shadows are long
+  // and fall to the west, midday shadows are short and straight south,
+  // golden-hour shadows stretch east; at night they shrink away.
+  let shLen, shAngle;
+  if (t >= 6 && t < 12) {
+    const k = (t - 6) / 6;
+    shLen = lerp(32, 10, k); shAngle = lerp(Math.PI * 1.1, Math.PI * 0.6, k);
+  } else if (t >= 12 && t < 17.5) {
+    shLen = lerp(10, 12, (t - 12) / 5.5); shAngle = Math.PI * 0.5;
+  } else if (t >= 17.5 && t < 19.5) {
+    const k = (t - 17.5) / 2;
+    shLen = lerp(12, 32, k); shAngle = lerp(Math.PI * 0.5, Math.PI * 0.25, k);
+  } else {
+    shLen = 8; shAngle = Math.PI * 0.5;
+  }
+  const shx = Math.cos(shAngle) * shLen, shy = Math.sin(shAngle) * shLen;
+  // Shadow silhouette: the footprint swept to the displaced roof rect (both
+  // rects + all four edge quads in one path, so any sun direction works).
+  const fp = [[bd.x, bd.y], [bd.x + bd.w, bd.y], [bd.x + bd.w, by], [bd.x, by]];
+  const rp = fp.map(([px, py]) => [px + ox + shx, py + oy + shy]);
+  ctx.fillStyle = 'rgba(20,26,18,0.28)';
+  ctx.beginPath();
+  ctx.moveTo(fp[0][0], fp[0][1]); for (let i = 1; i < 4; i++) ctx.lineTo(fp[i][0], fp[i][1]); ctx.closePath();
+  ctx.moveTo(rp[0][0], rp[0][1]); for (let i = 1; i < 4; i++) ctx.lineTo(rp[i][0], rp[i][1]); ctx.closePath();
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    ctx.moveTo(fp[i][0], fp[i][1]); ctx.lineTo(fp[j][0], fp[j][1]);
+    ctx.lineTo(rp[j][0], rp[j][1]); ctx.lineTo(rp[i][0], rp[i][1]); ctx.closePath();
+  }
+  ctx.fill();
+  // East face (darkest), then the south face.
+  ctx.fillStyle = shade(bd.color, 0.60);
+  ctx.beginPath();
+  ctx.moveTo(bd.x + bd.w, bd.y); ctx.lineTo(bd.x + bd.w, by);
+  ctx.lineTo(rx + bd.w, by + oy); ctx.lineTo(rx + bd.w, ry);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(bd.color, 0.78);
+  ctx.beginPath();
+  ctx.moveTo(bd.x, by); ctx.lineTo(bd.x + bd.w, by);
+  ctx.lineTo(rx + bd.w, by + oy); ctx.lineTo(rx, by + oy);
+  ctx.closePath(); ctx.fill();
+  // Floor-division lines: thin storey bands across both faces (~1 per 16px
+  // of height, capped at 4), sheared with the face like the windows. This
+  // is what makes a face read as a multi-storey building at screenshot
+  // scale instead of a flat slab.
+  const floors = Math.min(4, Math.round(H / 16));
+  if (floors > 0) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let k = 1; k <= floors; k++) {
+      const v = k / (floors + 1);
+      // South face: horizontal band at height fraction v.
+      ctx.moveTo(bd.x + ox * v, by - H * v);
+      ctx.lineTo(bd.x + bd.w + ox * v, by - H * v);
+      // East face: band runs along the depth direction at fraction v.
+      ctx.moveTo(bd.x + bd.w + ox * v, bd.y + oy * v);
+      ctx.lineTo(bd.x + bd.w + ox * v, by + oy * v);
+    }
+    ctx.stroke();
+  }
+  // Ambient occlusion at the south-face base, where the wall meets the ground.
+  const ao = ctx.createLinearGradient(0, by - H * 0.45, 0, by);
+  ao.addColorStop(0, 'rgba(0,0,0,0)'); ao.addColorStop(1, 'rgba(0,0,0,0.20)');
+  ctx.fillStyle = ao;
+  ctx.beginPath();
+  ctx.moveTo(bd.x, by); ctx.lineTo(bd.x + bd.w, by);
+  ctx.lineTo(rx + bd.w, by + oy); ctx.lineTo(rx, by + oy);
+  ctx.closePath(); ctx.fill();
+  // Roof: parapet edge + inner slab + rooftop clutter on taller blocks. The
+  // roof plane is brightened past the wall colour so it catches the dusk
+  // tint harder than the faces (shade() clamps at 255).
+  ctx.fillStyle = shade(bd.color, 1.10);
+  ctx.fillRect(rx, ry, bd.w, bd.h);
+  ctx.fillStyle = shade(bd.roof, 1.08);
+  ctx.fillRect(rx + 6, ry + 6, bd.w - 12, bd.h - 12);
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 2;
+  ctx.strokeRect(rx + 1, ry + 1, bd.w - 2, bd.h - 2);
+  if (bd.helipad) {
+    // Flagship tower: a helipad roundel on the roof (circle + H).
+    const hx = rx + bd.w / 2, hy = ry + bd.h / 2, hr = Math.min(bd.w, bd.h) * 0.30;
+    ctx.strokeStyle = 'rgba(245,245,240,0.9)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = 'rgba(245,245,240,0.9)';
+    ctx.font = `bold ${Math.round(hr * 0.9)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('H', hx, hy + 1);
+    ctx.textBaseline = 'alphabetic';
+  } else if (bd.hgt >= 3) {
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(rx + bd.w * 0.2, ry + bd.h * 0.25, 16, 12);
+    ctx.fillRect(rx + bd.w * 0.62, ry + bd.h * 0.55, 12, 10);
+  }
+  if (bd.waterTower) {
+    // Rooftop water tower: three legs, a tapered tank and an ellipse cap —
+    // an iconic skyline silhouette on one or two downtown towers.
+    const tx = rx + bd.w * 0.5, ty = ry + bd.h * 0.42;
+    const tw = Math.min(30, bd.w * 0.30), th = tw * 0.72, legH = 9;
+    ctx.strokeStyle = '#4a4238'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(tx - tw * 0.38, ty + th / 2); ctx.lineTo(tx - tw * 0.48, ty + th / 2 + legH);
+    ctx.moveTo(tx, ty + th / 2); ctx.lineTo(tx, ty + th / 2 + legH);
+    ctx.moveTo(tx + tw * 0.38, ty + th / 2); ctx.lineTo(tx + tw * 0.48, ty + th / 2 + legH);
+    ctx.stroke();
+    ctx.fillStyle = '#7a6a52';
+    ctx.beginPath();
+    ctx.moveTo(tx - tw / 2, ty - th / 2); ctx.lineTo(tx + tw / 2, ty - th / 2);
+    ctx.lineTo(tx + tw * 0.36, ty + th / 2); ctx.lineTo(tx - tw * 0.36, ty + th / 2);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(tx - tw * 0.44, ty - 1, tw * 0.88, 2); // tank band
+    ctx.fillStyle = '#8f7d60';
+    ctx.beginPath(); ctx.ellipse(tx, ty - th / 2, tw / 2, tw * 0.18, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // Windows on the south face: a grid sheared with the face (u across the
+  // width, v up the height). Pale by day, warm-lit at night (per-building
+  // pattern). Low-rise shopfronts with an awning skip the window row.
+  const hasAwning = bd.hgt === 1 && bd.litSeed % 3 === 0;
+  if (!hasAwning) {
+    const cols = Math.max(1, Math.floor(bd.w / 34));
+    const rows = Math.max(1, Math.floor(H / 16));
+    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+      const u = (i + 0.5) / cols, v = (j + 0.5) / rows;
+      const wx = bd.x + u * bd.w + ox * v - 5, wy = by - H * v - 3;
+      if (night) {
+        const lit = ((bd.litSeed >> ((i * 7 + j * 13) % 24)) & 1) === 1;
+        ctx.fillStyle = lit ? 'rgba(255,205,110,0.95)' : 'rgba(30,40,60,0.85)';
+      } else ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(wx, wy, 10, 6);
+    }
+  }
+  // Shop awning: a striped canopy along the ground floor of some low-rise
+  // south faces (street-level detail at the base of the face).
+  if (hasAwning) {
+    const awnColors = ['#c0392b', '#2980b9', '#27ae60', '#e67e22', '#8e44ad'];
+    const ax0 = bd.x + 4, ay0 = by - 9, aw = bd.w - 8;
+    ctx.fillStyle = awnColors[bd.litSeed % awnColors.length];
+    ctx.fillRect(ax0, ay0, aw, 7);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ax0, ay0, aw, 7); ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let sx = ax0 - 7; sx < ax0 + aw; sx += 12) { ctx.moveTo(sx, ay0 + 7); ctx.lineTo(sx + 7, ay0); }
+    ctx.stroke();
+    ctx.restore();
+  }
+  // Neon sign (a few downtown towers): glowing text mounted high on the
+  // south face, lit from dusk on. Each sign pulses out of phase via litSeed.
+  if ((night || dusk) && bd.neon) {
+    const pulse = 0.8 + 0.2 * Math.sin(world.time * 2.5 + bd.litSeed);
+    const nx = bd.x + bd.w / 2 + ox * 0.8, ny = by - H * 0.8 + 7;
+    ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+    ctx.shadowColor = bd.neonColor; ctx.shadowBlur = 26;
+    ctx.fillStyle = bd.neonColor;
+    ctx.globalAlpha = 0.75 * pulse; ctx.fillText(bd.neonText, nx, ny);
+    ctx.globalAlpha = 1.0 * pulse; ctx.fillText(bd.neonText, nx, ny);
+    ctx.shadowBlur = 0; // shadowBlur is expensive — always reset it
+    ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = pulse; ctx.fillText(bd.neonText, nx, ny);
+    ctx.globalAlpha = 1;
+  }
+}
+
 export function draw(ctx, world, view) {
   const w = view.w, h = view.h;
   const cam = world.cam;
@@ -157,6 +364,7 @@ export function draw(ctx, world, view) {
 
 function drawWorld(ctx, world) {
   const city = world.city;
+  pickLandmarks(city);
   const t = world.timeH;
   const night = t < 6 || t >= 19.5;
   const dusk = t >= 17.5 && t < 19.5;
@@ -229,122 +437,6 @@ function drawWorld(ctx, world) {
       ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.arc(tr.x + 4, tr.y + 5, tr.r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#3d7a34'; ctx.beginPath(); ctx.arc(tr.x, tr.y, tr.r, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#57a047'; ctx.beginPath(); ctx.arc(tr.x - 3, tr.y - 3, tr.r * 0.6, 0, Math.PI * 2); ctx.fill();
-    }
-    // Buildings: pseudo-3D — extruded south/east walls, a soft drop shadow cast
-    // to the south-east, a parapet roof, and windows that light up at night.
-    for (const bd of b.buildings) {
-      const ex = bd.hgt * 4, ey = bd.hgt * 4; // extrusion offset
-      // Drop shadow: length + direction follow the sun. Morning shadows are
-      // long and fall to the west, midday shadows are short and straight
-      // south, golden-hour shadows stretch east; at night they shrink away.
-      let shLen, shAngle;
-      if (t >= 6 && t < 12) {
-        const k = (t - 6) / 6;
-        shLen = lerp(32, 10, k); shAngle = lerp(Math.PI * 1.1, Math.PI * 0.6, k);
-      } else if (t >= 12 && t < 17.5) {
-        shLen = lerp(10, 12, (t - 12) / 5.5); shAngle = Math.PI * 0.5;
-      } else if (t >= 17.5 && t < 19.5) {
-        const k = (t - 17.5) / 2;
-        shLen = lerp(12, 32, k); shAngle = lerp(Math.PI * 0.5, Math.PI * 0.25, k);
-      } else {
-        shLen = 8; shAngle = Math.PI * 0.5;
-      }
-      const shx = Math.cos(shAngle) * shLen, shy = Math.sin(shAngle) * shLen;
-      ctx.fillStyle = 'rgba(20,26,18,0.28)';
-      ctx.beginPath();
-      if (shx >= 0) {
-        ctx.moveTo(bd.x + ex, bd.y + ey);
-        ctx.lineTo(bd.x + bd.w + ex + shx, bd.y + ey + shy);
-        ctx.lineTo(bd.x + bd.w + ex + shx, bd.y + bd.h + ey + shy);
-        ctx.lineTo(bd.x + ex, bd.y + bd.h + ey);
-      } else {
-        ctx.moveTo(bd.x + ex + shx, bd.y + ey + shy);
-        ctx.lineTo(bd.x + bd.w + ex, bd.y + ey);
-        ctx.lineTo(bd.x + bd.w + ex, bd.y + bd.h + ey);
-        ctx.lineTo(bd.x + ex + shx, bd.y + bd.h + ey + shy);
-      }
-      ctx.closePath(); ctx.fill();
-      // East wall.
-      ctx.fillStyle = shade(bd.color, 0.62);
-      ctx.beginPath();
-      ctx.moveTo(bd.x + bd.w, bd.y); ctx.lineTo(bd.x + bd.w + ex, bd.y + ey);
-      ctx.lineTo(bd.x + bd.w + ex, bd.y + bd.h + ey); ctx.lineTo(bd.x + bd.w, bd.y + bd.h);
-      ctx.closePath(); ctx.fill();
-      // Ambient occlusion at the wall base: a narrow gradient darkening where
-      // the wall meets the ground, fading outward (additive over the solid fill).
-      const aoE = ctx.createLinearGradient(bd.x + bd.w, bd.y, bd.x + bd.w + ex + 10, bd.y);
-      aoE.addColorStop(0, 'rgba(0,0,0,0.22)'); aoE.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = aoE;
-      ctx.beginPath();
-      ctx.moveTo(bd.x + bd.w, bd.y); ctx.lineTo(bd.x + bd.w + ex, bd.y + ey);
-      ctx.lineTo(bd.x + bd.w + ex, bd.y + bd.h + ey); ctx.lineTo(bd.x + bd.w, bd.y + bd.h);
-      ctx.closePath(); ctx.fill();
-      // South wall.
-      ctx.fillStyle = shade(bd.color, 0.78);
-      ctx.beginPath();
-      ctx.moveTo(bd.x, bd.y + bd.h); ctx.lineTo(bd.x + bd.w, bd.y + bd.h);
-      ctx.lineTo(bd.x + bd.w + ex, bd.y + bd.h + ey); ctx.lineTo(bd.x + ex, bd.y + bd.h + ey);
-      ctx.closePath(); ctx.fill();
-      const aoS = ctx.createLinearGradient(bd.x, bd.y + bd.h, bd.x, bd.y + bd.h + ey + 10);
-      aoS.addColorStop(0, 'rgba(0,0,0,0.22)'); aoS.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = aoS;
-      ctx.beginPath();
-      ctx.moveTo(bd.x, bd.y + bd.h); ctx.lineTo(bd.x + bd.w, bd.y + bd.h);
-      ctx.lineTo(bd.x + bd.w + ex, bd.y + bd.h + ey); ctx.lineTo(bd.x + ex, bd.y + bd.h + ey);
-      ctx.closePath(); ctx.fill();
-      // Roof.
-      ctx.fillStyle = bd.color;
-      ctx.fillRect(bd.x, bd.y, bd.w, bd.h);
-      ctx.fillStyle = bd.roof;
-      ctx.fillRect(bd.x + 6, bd.y + 6, bd.w - 12, bd.h - 12);
-      ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 2;
-      ctx.strokeRect(bd.x + 1, bd.y + 1, bd.w - 2, bd.h - 2);
-      // Rooftop clutter (AC units / water tank) on taller blocks.
-      if (bd.hgt >= 3) {
-        ctx.fillStyle = 'rgba(0,0,0,0.18)';
-        ctx.fillRect(bd.x + bd.w * 0.2, bd.y + bd.h * 0.25, 16, 12);
-        ctx.fillRect(bd.x + bd.w * 0.62, bd.y + bd.h * 0.55, 12, 10);
-      }
-      // Windows: pale by day, warm-lit at night (per-building pattern).
-      const cols = Math.max(1, Math.floor(bd.w / 34)), rows = Math.max(1, Math.floor(bd.h / 34));
-      for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
-        const wx = bd.x + 12 + i * 32, wy = bd.y + 12 + j * 32;
-        if (night) {
-          const lit = ((bd.litSeed >> ((i * 7 + j * 13) % 24)) & 1) === 1;
-          ctx.fillStyle = lit ? 'rgba(255,205,110,0.95)' : 'rgba(30,40,60,0.85)';
-        } else ctx.fillStyle = 'rgba(255,255,255,0.25)';
-        ctx.fillRect(wx, wy, 12, 12);
-      }
-      // Shop awning: a striped canopy along the south edge of some low-rise
-      // buildings (street-level detail that breaks up the roof rectangles).
-      if (bd.hgt === 1 && bd.litSeed % 3 === 0) {
-        const awnColors = ['#c0392b', '#2980b9', '#27ae60', '#e67e22', '#8e44ad'];
-        const ax0 = bd.x + 4, ay0 = bd.y + bd.h - 4, aw = bd.w - 8;
-        ctx.fillStyle = awnColors[bd.litSeed % awnColors.length];
-        ctx.fillRect(ax0, ay0, aw, 7);
-        ctx.save();
-        ctx.beginPath(); ctx.rect(ax0, ay0, aw, 7); ctx.clip();
-        ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let sx = ax0 - 7; sx < ax0 + aw; sx += 12) { ctx.moveTo(sx, ay0 + 7); ctx.lineTo(sx + 7, ay0); }
-        ctx.stroke();
-        ctx.restore();
-      }
-      // Neon sign (a few downtown towers): glowing text above the roof edge,
-      // lit from dusk on. Each sign pulses out of phase via its litSeed.
-      if ((night || dusk) && bd.neon) {
-        const pulse = 0.8 + 0.2 * Math.sin(world.time * 2.5 + bd.litSeed);
-        const nx = bd.x + bd.w / 2, ny = bd.y - 10;
-        ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.shadowColor = bd.neonColor; ctx.shadowBlur = 26;
-        ctx.fillStyle = bd.neonColor;
-        ctx.globalAlpha = 0.75 * pulse; ctx.fillText(bd.neonText, nx, ny);
-        ctx.globalAlpha = 1.0 * pulse; ctx.fillText(bd.neonText, nx, ny);
-        ctx.shadowBlur = 0; // shadowBlur is expensive — always reset it
-        ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = pulse; ctx.fillText(bd.neonText, nx, ny);
-        ctx.globalAlpha = 1;
-      }
     }
   }
   // Roads (wet sheen in rain).
@@ -466,27 +558,8 @@ function drawWorld(ctx, world) {
     for (let i = 0; i < 4; i++) ctx.fillRect(-22 + i * 11, -16, 5, 32);
     ctx.restore();
   }
-  // Street props: billboards, bus-stop shelters, benches (all decoration —
-  // the density is what makes the city read as lived-in from above).
-  if (city.billboards) for (const bb of city.billboards) {
-    ctx.fillStyle = '#4a4f57'; ctx.fillRect(bb.x + bb.w / 2 - 2, bb.y + bb.h, 4, 20); // pole
-    ctx.fillStyle = bb.color; ctx.fillRect(bb.x, bb.y, bb.w, bb.h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2; ctx.strokeRect(bb.x + 1, bb.y + 1, bb.w - 2, bb.h - 2);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
-    const words = bb.text.split(' ');
-    if (words.length > 1 && bb.text.length > 11) {
-      const mid = Math.ceil(words.length / 2);
-      ctx.fillText(words.slice(0, mid).join(' '), bb.x + bb.w / 2, bb.y + 16);
-      ctx.fillText(words.slice(mid).join(' '), bb.x + bb.w / 2, bb.y + 28);
-    } else ctx.fillText(bb.text, bb.x + bb.w / 2, bb.y + 23);
-  }
-  if (city.busStops) for (const bs of city.busStops) {
-    ctx.fillStyle = '#3a4149'; ctx.fillRect(bs.x, bs.y - 14, 6, 28);              // back wall
-    ctx.fillStyle = '#5d6d7e'; ctx.fillRect(bs.x - 16, bs.y - 17, 22, 5);          // roof
-    ctx.fillStyle = '#3a4149'; ctx.fillRect(bs.x - 14, bs.y - 12, 3, 20);          // pole
-    ctx.fillStyle = '#8a6f4d'; ctx.fillRect(bs.x - 12, bs.y + 2, 14, 5);           // bench
-    ctx.fillStyle = '#f1c40f'; ctx.fillRect(bs.x - 2, bs.y - 17, 4, 4);            // route sign
-  }
+  // Park/sidewalk benches (flat ground props; tall props — billboards and
+  // bus-stop shelters — draw in the depth-sorted entity pass below).
   for (const b of city.blocks) if (b.benches) for (const bn of b.benches) {
     ctx.fillStyle = '#8a6f4d'; ctx.fillRect(bn.x, bn.y, 22, 6);
     ctx.fillStyle = '#5d4a33'; ctx.fillRect(bn.x + 1, bn.y + 6, 3, 5); ctx.fillRect(bn.x + 18, bn.y + 6, 3, 5);
@@ -560,71 +633,106 @@ function drawWorld(ctx, world) {
       ctx.restore();
     }
   }
-  // Cars (traffic + police + rivals + player). Airborne stunt cars draw bigger
-  // with a separated shadow.
-  for (const c of world.cars) {
-    const braking = c.brakeLight > 0;
-    if (c.air > 0) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.beginPath(); ctx.ellipse(c.x + 14, c.y + 18, 30, 16, c.a, 0, Math.PI * 2); ctx.fill();
-      ctx.translate(c.x, c.y); ctx.scale(1.18, 1.18); ctx.translate(-c.x, -c.y);
-      drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
-      ctx.restore();
-    } else {
-      drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
-    }
-  }
-  // Pedestrians + cops.
-  for (const pd of world.peds) if (!pd.dead) drawPed(ctx, pd.x, pd.y, pd.a, pd.color, pd.enemy, world.time * pd.speed * 0.08);
-  for (const pd of world.peds) {
-    if (!pd.dead) continue;
-    ctx.save(); ctx.translate(pd.x, pd.y); ctx.rotate(0.6);
-    ctx.fillStyle = pd.color; rr(ctx, -9, -5, 18, 10, 4); ctx.fill();
-    ctx.restore();
-  }
-  for (const cp of world.cops) {
-    ctx.save(); ctx.translate(cp.x, cp.y);
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 3, 9, 7, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.rotate(cp.a);
-    // Legs swing fast — foot cops run at 185 u/s.
-    ctx.fillStyle = '#141c26';
-    const csw = Math.sin(world.time * 185 * 0.08) * 4;
-    ctx.fillRect(-6 + csw, -6, 7, 3); ctx.fillRect(-6 - csw, 3, 7, 3);
-    ctx.fillStyle = '#1c2733'; rr(ctx, -7, -5, 14, 10, 4); ctx.fill();
-    ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(9, 0, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.fillRect(-7, -5, 14, 3);
-    ctx.restore();
-  }
-  // Player.
+  // Depth-sorted entity pass (2.5D): buildings, tall props, cars and people
+  // in one list keyed by ground y, so a tower occludes whatever is behind it
+  // (north) and street life in front (south) draws over its faces. Ground,
+  // roads and flat props stay in the base pass above.
   const p = world.player;
-  if (p.onFoot) {
-    ctx.save(); ctx.translate(p.x, p.y);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(2, 4, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.rotate(p.a);
-    // Legs swing only while actually moving; standing still keeps phase 0.
-    ctx.fillStyle = '#2c3e50';
-    const psw = Math.sin(world.time * (p.moving ? PLAYER_SPEED : 0) * 0.07) * 4;
-    ctx.fillRect(-7 + psw, -7, 8, 3); ctx.fillRect(-7 - psw, 4, 8, 3);
-    ctx.fillStyle = '#f5f0e6'; rr(ctx, -8, -6, 16, 12, 5); ctx.fill();      // jacket
-    ctx.fillStyle = '#2c3e50'; rr(ctx, -8, -6, 5, 12, 2); ctx.fill();       // jeans hint
-    ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(10, 0, 5.5, 0, Math.PI * 2); ctx.fill();
-    // Held weapon: pistol / SMG / shotgun silhouettes.
-    ctx.fillStyle = '#22262b';
-    if (p.weapon === 'smg') { ctx.fillRect(10, -2, 16, 4); ctx.fillRect(16, 2, 4, 5); }
-    else if (p.weapon === 'shotgun') { ctx.fillRect(10, -2, 20, 4); ctx.fillStyle = '#7a4a21'; ctx.fillRect(18, -2, 6, 4); }
-    else { ctx.fillStyle = '#c0392b'; ctx.fillRect(10, -3, 12, 4); }
-    ctx.restore();
-    // Aim line (short, subtle).
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16); ctx.lineTo(p.x + Math.cos(p.aim) * 34, p.y + Math.sin(p.aim) * 34); ctx.stroke();
-  } else if (p.car) {
-    // Player car gets a subtle outline so it reads in traffic.
-    ctx.save(); ctx.translate(p.car.x, p.car.y); ctx.rotate(p.car.a);
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 2;
-    rr(ctx, -CAR_L / 2 - 2, -CAR_W / 2 - 2, CAR_L + 4, CAR_W + 4, 9); ctx.stroke();
-    ctx.restore();
-  }
+  const ents = [];
+  for (const b of city.blocks) for (const bd of b.buildings)
+    ents.push({ y: bd.y + bd.h, fn: () => drawBuilding(ctx, bd, world, night, dusk, t) });
+  if (city.billboards) for (const bb of city.billboards)
+    ents.push({ y: bb.y + bb.h + 20, fn: () => {
+      ctx.fillStyle = '#4a4f57'; ctx.fillRect(bb.x + bb.w / 2 - 2, bb.y + bb.h, 4, 20); // pole
+      ctx.fillStyle = bb.color; ctx.fillRect(bb.x, bb.y, bb.w, bb.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2; ctx.strokeRect(bb.x + 1, bb.y + 1, bb.w - 2, bb.h - 2);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+      const words = bb.text.split(' ');
+      if (words.length > 1 && bb.text.length > 11) {
+        const mid = Math.ceil(words.length / 2);
+        ctx.fillText(words.slice(0, mid).join(' '), bb.x + bb.w / 2, bb.y + 16);
+        ctx.fillText(words.slice(mid).join(' '), bb.x + bb.w / 2, bb.y + 28);
+      } else ctx.fillText(bb.text, bb.x + bb.w / 2, bb.y + 23);
+    } });
+  if (city.busStops) for (const bs of city.busStops)
+    ents.push({ y: bs.y + 14, fn: () => {
+      ctx.fillStyle = '#3a4149'; ctx.fillRect(bs.x, bs.y - 14, 6, 28);              // back wall
+      ctx.fillStyle = '#5d6d7e'; ctx.fillRect(bs.x - 16, bs.y - 17, 22, 5);          // roof
+      ctx.fillStyle = '#3a4149'; ctx.fillRect(bs.x - 14, bs.y - 12, 3, 20);          // pole
+      ctx.fillStyle = '#8a6f4d'; ctx.fillRect(bs.x - 12, bs.y + 2, 14, 5);           // bench
+      ctx.fillStyle = '#f1c40f'; ctx.fillRect(bs.x - 2, bs.y - 17, 4, 4);            // route sign
+    } });
+  // Cars (traffic + police + rivals + player). Airborne stunt cars draw
+  // bigger with a separated shadow.
+  for (const c of world.cars)
+    ents.push({ y: c.y, fn: () => {
+      const braking = c.brakeLight > 0;
+      if (c.air > 0) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.beginPath(); ctx.ellipse(c.x + 14, c.y + 18, 30, 16, c.a, 0, Math.PI * 2); ctx.fill();
+        ctx.translate(c.x, c.y); ctx.scale(1.18, 1.18); ctx.translate(-c.x, -c.y);
+        drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
+        ctx.restore();
+      } else {
+        drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
+      }
+      // Player car gets a subtle outline so it reads in traffic.
+      if (!p.onFoot && p.car === c) {
+        ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.a);
+        ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 2;
+        rr(ctx, -CAR_L / 2 - 2, -CAR_W / 2 - 2, CAR_L + 4, CAR_W + 4, 9); ctx.stroke();
+        ctx.restore();
+      }
+    } });
+  // Pedestrians + cops.
+  for (const pd of world.peds) if (!pd.dead)
+    ents.push({ y: pd.y, fn: () => drawPed(ctx, pd.x, pd.y, pd.a, pd.color, pd.enemy, world.time * pd.speed * 0.08) });
+  for (const pd of world.peds) if (pd.dead)
+    ents.push({ y: pd.y, fn: () => {
+      ctx.save(); ctx.translate(pd.x, pd.y); ctx.rotate(0.6);
+      ctx.fillStyle = pd.color; rr(ctx, -9, -5, 18, 10, 4); ctx.fill();
+      ctx.restore();
+    } });
+  for (const cp of world.cops)
+    ents.push({ y: cp.y, fn: () => {
+      ctx.save(); ctx.translate(cp.x, cp.y);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 3, 9, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.rotate(cp.a);
+      // Legs swing fast — foot cops run at 185 u/s.
+      ctx.fillStyle = '#141c26';
+      const csw = Math.sin(world.time * 185 * 0.08) * 4;
+      ctx.fillRect(-6 + csw, -6, 7, 3); ctx.fillRect(-6 - csw, 3, 7, 3);
+      ctx.fillStyle = '#1c2733'; rr(ctx, -7, -5, 14, 10, 4); ctx.fill();
+      ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(9, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(-7, -5, 14, 3);
+      ctx.restore();
+    } });
+  // Player on foot (the car case is handled in the car pass above).
+  if (p.onFoot)
+    ents.push({ y: p.y, fn: () => {
+      ctx.save(); ctx.translate(p.x, p.y);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(2, 4, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.rotate(p.a);
+      // Legs swing only while actually moving; standing still keeps phase 0.
+      ctx.fillStyle = '#2c3e50';
+      const psw = Math.sin(world.time * (p.moving ? PLAYER_SPEED : 0) * 0.07) * 4;
+      ctx.fillRect(-7 + psw, -7, 8, 3); ctx.fillRect(-7 - psw, 4, 8, 3);
+      ctx.fillStyle = '#f5f0e6'; rr(ctx, -8, -6, 16, 12, 5); ctx.fill();      // jacket
+      ctx.fillStyle = '#2c3e50'; rr(ctx, -8, -6, 5, 12, 2); ctx.fill();       // jeans hint
+      ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(10, 0, 5.5, 0, Math.PI * 2); ctx.fill();
+      // Held weapon: pistol / SMG / shotgun silhouettes.
+      ctx.fillStyle = '#22262b';
+      if (p.weapon === 'smg') { ctx.fillRect(10, -2, 16, 4); ctx.fillRect(16, 2, 4, 5); }
+      else if (p.weapon === 'shotgun') { ctx.fillRect(10, -2, 20, 4); ctx.fillStyle = '#7a4a21'; ctx.fillRect(18, -2, 6, 4); }
+      else { ctx.fillStyle = '#c0392b'; ctx.fillRect(10, -3, 12, 4); }
+      ctx.restore();
+      // Aim line (short, subtle).
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16); ctx.lineTo(p.x + Math.cos(p.aim) * 34, p.y + Math.sin(p.aim) * 34); ctx.stroke();
+    } });
+  ents.sort((a, b) => a.y - b.y);
+  for (const e of ents) e.fn();
   // Particles.
   for (const pt of world.particles) {
     ctx.globalAlpha = clamp(pt.life / pt.max, 0, 1);
