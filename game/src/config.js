@@ -31,6 +31,29 @@ export const POLICE_RAM = 26;         // police car touch radius (bust while sto
 // Combat.
 export const PISTOL_DAMAGE = 34, PISTOL_RANGE = 420, PISTOL_RATE = 0.28;
 export const ENEMY_HEALTH = 70;
+// Weapons the player can carry and switch between (1/2/3). Pistol is the default
+// and behaves exactly as before; SMG is fast and light, the shotgun throws a
+// spread of pellets that hurts up close.
+export const WEAPONS = {
+  pistol:  { name: 'PISTOL',  damage: PISTOL_DAMAGE, range: PISTOL_RANGE, rate: PISTOL_RATE, pellets: 1, spread: 0,    startAmmo: 24 },
+  smg:     { name: 'SMG',     damage: 16,            range: 380,          rate: 0.09,        pellets: 1, spread: 0.05, startAmmo: 0 },
+  shotgun: { name: 'SHOTGUN', damage: 13,            range: 240,          rate: 0.85,        pellets: 6, spread: 0.16, startAmmo: 0 },
+};
+export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun'];
+export const ARMOR_MAX = 100;
+// Vehicles: per-kind handling + draw size. Cars without a kind entry fall back to
+// the sedan numbers (the original CAR_* constants), so nothing else changes.
+export const VEHICLES = {
+  sedan:  { max: CAR_MAX,        accel: CAR_ACCEL,       turn: CAR_TURN,       w: CAR_W,     l: CAR_L,     hp: 100 },
+  sport:  { max: 610,            accel: 520,             turn: 2.9,            w: CAR_W - 2, l: CAR_L,     hp: 90 },
+  taxi:   { max: CAR_MAX,        accel: CAR_ACCEL,       turn: CAR_TURN,       w: CAR_W,     l: CAR_L,     hp: 110 },
+  van:    { max: 430,            accel: 360,             turn: 2.2,            w: CAR_W + 4, l: CAR_L + 12, hp: 140 },
+  pickup: { max: 480,            accel: 400,             turn: 2.4,            w: CAR_W + 2, l: CAR_L + 8,  hp: 130 },
+  truck:  { max: 380,            accel: 300,             turn: 1.8,            w: CAR_W + 8, l: CAR_L + 34, hp: 220 },
+  bus:    { max: 400,            accel: 310,             turn: 1.7,            w: CAR_W + 8, l: CAR_L + 44, hp: 240 },
+  police: { max: CAR_MAX * 0.98, accel: CAR_ACCEL + 40,  turn: 3.0,            w: CAR_W,     l: CAR_L,     hp: 150 },
+  rival:  { max: 560,            accel: 480,             turn: 2.8,            w: CAR_W,     l: CAR_L,     hp: 130 },
+};
 // Economy / story.
 export const START_CASH = 150;
 export const BUST_FINE = 200, WASTE_FINE = 200;

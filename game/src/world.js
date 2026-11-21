@@ -5,7 +5,7 @@ import {
   CAR_W, CAR_L, CAR_ACCEL, CAR_BRAKE, CAR_REVERSE, CAR_MAX, CAR_MAX_REVERSE, CAR_TURN,
   TRAFFIC_COUNT, PED_COUNT, TRAFFIC_SPEED, WANTED_MAX, WANTED_DECAY, WANTED_SEEN_DECAY,
   PISTOL_DAMAGE, PISTOL_RANGE, PISTOL_RATE, ENEMY_HEALTH, START_CASH, BUST_FINE, WASTE_FINE,
-  SAVE_KEY, DAY_LENGTH, PAL,
+  SAVE_KEY, DAY_LENGTH, PAL, WEAPONS, WEAPON_ORDER, ARMOR_MAX, VEHICLES,
 } from './config.js';
 import { mulberry32, ri, rf, pick, clamp, lerp, dist, dist2, angTo, angDiff, turnToward } from './random.js';
 import { buildCity, onRoad, inBuilding, inWater, nearestNode, roadPoint } from './city.js';
@@ -19,6 +19,14 @@ export const MISSIONS = [
     reward: 800 },
   { id: 4, name: 'The Docks', brief: 'The Marlin crew is moving in on our turf at the port. End it. Then get out of there before the whole precinct shows up.',
     reward: 1500 },
+  { id: 5, name: 'Street Kings', brief: 'The Solmar street-race crown is up for grabs. Five checkpoints, one rival who wants it just as bad. Beat him to the line.',
+    reward: 900 },
+  { id: 6, name: 'Armored Score', brief: 'A cash truck rolls the avenues at noon. Crack it open, grab the take, and get it to Rosa before the precinct closes the net.',
+    reward: 1800 },
+  { id: 7, name: 'Escort', brief: 'Rosa\'s accountant is spooked and needs a ride to the safehouse. The Marlin crew will try to stop you. Keep him breathing.',
+    reward: 1200 },
+  { id: 8, name: 'Last Delivery', brief: 'One final chain of drops across Solmar Bay, then the docks. Run it clean and the Castellanos debt is settled for good.',
+    reward: 2000 },
 ];
 
 let carId = 1;
@@ -39,19 +47,38 @@ export class World {
       x: c.spawn.x, y: c.spawn.y, a: -Math.PI / 2, hp: PLAYER_HEALTH, cash: START_CASH,
       ammo: 24, onFoot: true, car: null, speed: 0, aim: -Math.PI / 2, bustT: 0, invuln: 0,
       sprint: false, moving: false,
+      weapon: 'pistol', armor: 0,
+      weapons: { pistol: { ammo: 24 }, smg: { ammo: 0 }, shotgun: { ammo: 0 } },
     };
     this.cars = []; this.peds = []; this.cops = [];
     this.particles = []; this.skids = []; this.pickups = [];
     this.mission = { index: 0, stage: 0, timer: 0, data: {}, done: false, failed: false };
     this.storyDone = false; this.jobsDone = 0;
-    this.job = null; // free-roam taxi fare
+    this.job = null; // free-roam taxi fare / delivery
+    this.shopT = 0;  // garage repair/respray cooldown
+    this.safeT = 0;  // safehouse heal cooldown
+    this.rivalT = 0; // rival-crew spawn timer at high wanted
     this.cam = { x: this.player.x, y: this.player.y, zoom: 1, shake: 0 };
     this.msg = null; this.msgT = 0;
     this.shootT = 0; this.hornT = 0;
     this.stats = { stolen: 0, busted: 0, wasted: 0, kills: 0, missions: 0 };
     this.spawnTraffic(); this.spawnPeds();
     this.spawnParkedCars();
+    this.seedPickups();
     this.setObjective();
+  }
+  // A few useful things lying around the city: an SMG by the docks, a shotgun
+  // near the precinct, body armor at the marina, ammo + health at landmarks.
+  seedPickups() {
+    const c = this.city;
+    this.pickups.push(
+      { x: c.docks.x - 120, y: c.docks.y + 60, kind: 'weapon', weapon: 'smg', taken: false },
+      { x: c.precinct.x + 70, y: c.precinct.y + 40, kind: 'weapon', weapon: 'shotgun', taken: false },
+      { x: c.marina ? c.marina.x : c.pier.x, y: c.marina ? c.marina.y - 60 : c.pier.y, kind: 'armor', taken: false },
+      { x: c.garage.x + 60, y: c.garage.y - 50, kind: 'ammo', taken: false },
+      { x: c.hospital.x - 60, y: c.hospital.y + 50, kind: 'health', taken: false },
+      { x: c.safehouse.x + 60, y: c.safehouse.y + 50, kind: 'armor', taken: false },
+    );
   }
   // ---------- spawning ----------
   spawnTraffic() {
@@ -60,19 +87,25 @@ export class World {
   addTrafficCar(anywhere) {
     const rng = this.rng;
     const p = roadPoint(rng, this.city);
-    const kind = rng() < 0.12 ? 'taxi' : rng() < 0.18 ? 'sport' : rng() < 0.3 ? 'van' : 'sedan';
+    const roll = rng();
+    const kind = roll < 0.10 ? 'taxi' : roll < 0.24 ? 'sport' : roll < 0.36 ? 'van'
+      : roll < 0.46 ? 'pickup' : roll < 0.53 ? 'truck' : roll < 0.58 ? 'bus' : 'sedan';
+    const spec = VEHICLES[kind] || VEHICLES.sedan;
     const car = {
       id: carId++, x: p.x, y: p.y, a: rng() < 0.5 ? 0 : Math.PI / 2, speed: rf(rng, 60, TRAFFIC_SPEED),
       color: kind === 'taxi' ? PAL.taxi : pick(rng, PAL.car), kind, driver: 'traffic',
-      path: [], pathI: 0, hp: 100, stuck: 0,
+      path: [], pathI: 0, hp: spec.hp, stuck: 0, brakeLight: 0, air: 0, honkT: 0,
     };
     this.planRoute(car, true);
     this.cars.push(car);
     return car;
   }
   spawnParkedCars() {
+    const rng = this.rng;
     for (const b of this.city.blocks) for (const pc of b.cars) {
-      this.cars.push({ id: carId++, x: pc.x, y: pc.y, a: pc.a, speed: 0, color: pc.color, kind: 'sedan', driver: null, path: [], pathI: 0, hp: 100, stuck: 0 });
+      const kind = pick(rng, ['sedan', 'sedan', 'sport', 'pickup', 'van']);
+      const spec = VEHICLES[kind] || VEHICLES.sedan;
+      this.cars.push({ id: carId++, x: pc.x, y: pc.y, a: pc.a, speed: 0, color: pc.color, kind, driver: null, path: [], pathI: 0, hp: spec.hp, stuck: 0, brakeLight: 0, air: 0, honkT: 0 });
     }
   }
   spawnPeds() {
@@ -146,10 +179,30 @@ export class World {
       if (m.stage === 0) { this.objective = 'Steal a car off the street (E near a moving car)'; this.marker = null; }
       else if (m.stage === 1) { this.objective = 'Lose the cops — break line of sight until the heat dies'; this.marker = null; }
       else { this.objective = 'Get to the safehouse'; this.marker = { x: c.safehouse.x, y: c.safehouse.y, r: 46 }; }
-    } else {
+    } else if (m.index === 3) {
       if (m.stage === 0) { this.objective = 'Go to the docks — the Marlin crew is waiting'; this.marker = { x: c.docks.x - 60, y: c.docks.y, r: 46 }; }
       else if (m.stage === 1) { const left = this.peds.filter(p => p.enemy && !p.dead).length; this.objective = `Take out the Marlin crew — ${left} left`; this.marker = { x: c.docks.x - 60, y: c.docks.y, r: 60 }; }
       else { this.objective = 'Escape to the safehouse — the precinct is coming'; this.marker = { x: c.safehouse.x, y: c.safehouse.y, r: 46 }; }
+    } else if (m.index === 4) {
+      // Street Kings: checkpoint race vs a rival.
+      const cp = (m.data.checkpoints || [])[m.data.cpI || 0];
+      if (m.stage === 0) { this.objective = 'Get to the race start — the avenue by the garage'; this.marker = { x: c.garage.x, y: c.garage.y + 140, r: 46 }; }
+      else if (cp) { this.objective = `Checkpoint ${(m.data.cpI || 0) + 1}/5 — beat the rival to the line${m.timer > 0 ? ` (${Math.ceil(m.timer)}s)` : ''}`; this.marker = { x: cp.x, y: cp.y, r: 52 }; }
+      else { this.objective = 'Race to the finish'; this.marker = null; }
+    } else if (m.index === 5) {
+      // Armored Score: crack the truck, grab the cash, deliver it.
+      if (m.stage === 0) { this.objective = 'Find the armored cash truck — ram or shoot it until it stops'; const tr = this.cars.find(car => car.id === m.data.truckId); this.marker = tr ? { x: tr.x, y: tr.y, r: 54 } : null; }
+      else if (m.stage === 1) { this.objective = 'Grab the cash from the truck'; this.marker = m.data.cashAt ? { x: m.data.cashAt.x, y: m.data.cashAt.y, r: 44 } : null; }
+      else { this.objective = 'Deliver the take to Rosa\'s Garage'; this.marker = { x: c.garage.x, y: c.garage.y, r: 46 }; }
+    } else if (m.index === 6) {
+      // Escort: pick up the accountant, get him to the safehouse.
+      if (m.stage === 0) { this.objective = 'Pick up Rosa\'s accountant at St. Marina Hospital'; this.marker = { x: c.hospital.x, y: c.hospital.y, r: 48 }; }
+      else { this.objective = 'Get the accountant to the safehouse — Marlin cars are coming'; this.marker = { x: c.safehouse.x, y: c.safehouse.y, r: 48 }; }
+    } else if (m.index === 7) {
+      // Last Delivery: a chain of timed drops, then the docks.
+      const dp = (m.data.points || [])[m.data.pi || 0];
+      if (dp) { this.objective = `Delivery ${(m.data.pi || 0) + 1}/${(m.data.points || []).length}${m.timer > 0 ? ` (${Math.ceil(m.timer)}s)` : ''}`; this.marker = { x: dp.x, y: dp.y, r: 46 }; }
+      else { this.objective = 'Final drop — the docks'; this.marker = { x: c.docks.x - 60, y: c.docks.y, r: 48 }; }
     }
   }
   showMsg(title, sub = '', dur = 3) { this.msg = { title, sub }; this.msgT = dur; }
@@ -175,7 +228,73 @@ export class World {
     this.showMsg(def.name, def.brief, 5);
     if (this.mission.index === 1) this.spawnDrop();
     if (this.mission.index === 2) this.mission.data.stolenAtStart = this.stats.stolen;
+    if (this.mission.index === 4) this.setupRace();
+    if (this.mission.index === 5) this.setupHeist();
+    if (this.mission.index === 7) this.setupDeliveryChain();
     this.setObjective();
+  }
+  // Street Kings: five checkpoints across the avenues + a rival racer.
+  setupRace() {
+    const c = this.city;
+    this.mission.data.checkpoints = [
+      { x: c.roads.v[6], y: c.roads.h[7] },
+      { x: c.roads.v[10], y: c.roads.h[5] },
+      { x: c.roads.v[10], y: c.roads.h[2] },
+      { x: c.roads.v[4], y: c.roads.h[1] },
+      { x: c.roads.v[2], y: c.roads.h[6] },
+    ];
+    this.mission.data.cpI = 0;
+    this.mission.data.rivalCpI = 0;
+    this.mission.timer = 0;
+  }
+  spawnRivalRacer() {
+    const c = this.city;
+    const rival = {
+      id: carId++, x: c.garage.x + 46, y: c.garage.y + 140, a: -Math.PI / 2, speed: 0,
+      color: '#8e44ad', kind: 'sport', driver: 'racer', path: [], pathI: 0,
+      hp: VEHICLES.sport.hp, stuck: 0, brakeLight: 0, air: 0, honkT: 0,
+    };
+    this.cars.push(rival);
+    this.mission.data.rivalId = rival.id;
+    return rival;
+  }
+  // Armored Score: a tough cash truck rolling a route.
+  setupHeist() {
+    const rng = this.rng;
+    const p = roadPoint(rng, this.city);
+    const truck = {
+      id: carId++, x: p.x, y: p.y, a: 0, speed: 90, color: '#5d6d7e', kind: 'truck',
+      driver: 'truck', path: [], pathI: 0, hp: 240, stuck: 0, brakeLight: 0, air: 0, honkT: 0,
+    };
+    this.planRoute(truck, true);
+    this.cars.push(truck);
+    this.mission.data.truckId = truck.id;
+  }
+  // Last Delivery: four timed drops, then the docks.
+  setupDeliveryChain() {
+    const c = this.city;
+    this.mission.data.points = [
+      { x: c.roads.v[3], y: c.roads.h[2] },
+      { x: c.roads.v[9], y: c.roads.h[3] },
+      { x: c.roads.v[8], y: c.roads.h[7] },
+      { x: c.roads.v[4], y: c.roads.h[8] },
+    ];
+    this.mission.data.pi = 0;
+    this.mission.timer = 90;
+  }
+  // A hostile Marlin crew car that chases and rams (no bust — pure menace).
+  spawnRivalCar() {
+    const rng = this.rng;
+    const p = this.player;
+    const spot = roadPoint(rng, this.city);
+    if (dist(spot.x, spot.y, p.x, p.y) < 420) return null;
+    const car = {
+      id: carId++, x: spot.x, y: spot.y, a: 0, speed: 0, color: '#7d3c98', kind: 'rival',
+      driver: 'rival', path: [], pathI: 0, hp: VEHICLES.rival.hp, stuck: 0, brakeLight: 0, air: 0, honkT: 0,
+    };
+    this.planRoute(car, false);
+    this.cars.push(car);
+    return car;
   }
   spawnDrop() {
     const spots = [
@@ -207,6 +326,7 @@ export class World {
         cash: this.player.cash, mission: this.mission.index, stage: this.mission.stage,
         x: this.player.x, y: this.player.y, hp: this.player.hp, ammo: this.player.ammo,
         timeH: this.timeH, storyDone: this.storyDone, jobsDone: this.jobsDone,
+        weapon: this.player.weapon, armor: this.player.armor, weapons: this.player.weapons,
       }));
     } catch { /* storage unavailable */ }
   }
@@ -217,11 +337,18 @@ export class World {
       if (!s) return false;
       this.player.cash = s.cash; this.player.x = s.x; this.player.y = s.y;
       this.player.hp = s.hp; this.player.ammo = s.ammo; this.timeH = s.timeH;
+      if (s.weapon && WEAPONS[s.weapon]) this.player.weapon = s.weapon;
+      if (typeof s.armor === 'number') this.player.armor = s.armor;
+      if (s.weapons) this.player.weapons = s.weapons;
+      if (this.player.weapons[this.player.weapon]) this.player.weapons[this.player.weapon].ammo = s.ammo;
       this.storyDone = !!s.storyDone; this.jobsDone = s.jobsDone || 0;
       this.mission.index = Math.min(s.mission, MISSIONS.length - 1);
       this.mission.stage = s.stage || 0; this.mission.done = false; this.mission.data = {};
       if (this.storyDone) this.mission.index = MISSIONS.length - 1;
       if (this.mission.index === 1) this.spawnDrop();
+      if (this.mission.index === 4) this.setupRace();
+      if (this.mission.index === 5) this.setupHeist();
+      if (this.mission.index === 7) this.setupDeliveryChain();
       this.setObjective();
       return true;
     } catch { return false; }
@@ -241,14 +368,16 @@ World.prototype.update = function (dt, input, audio) {
   if (p.invuln > 0) p.invuln -= dt;
   if (p.onFoot) this.updatePlayer(dt, input, audio);
   else this.updatePlayerCar(dt, input, audio);
-  this.updateTraffic(dt);
+  this.updateTraffic(dt, audio);
   this.updatePeds(dt);
   this.updatePolice(dt, audio);
+  this.updateRivals(dt);
   this.updateWanted(dt);
   this.updateMissions(dt);
   this.updatePickups(dt);
   this.updateParticles(dt);
   this.updateJob(dt);
+  this.updateServices(dt, audio);
   // Camera follows the player (or their car).
   const focus = p.onFoot ? p : p.car;
   const tz = p.onFoot ? 1.0 : 0.82;
@@ -284,13 +413,32 @@ World.prototype.updatePlayer = function (dt, input, audio) {
   }
   // Aim at the mouse (world coords are set by main.js each frame).
   p.aim = Math.atan2(input.mouse.wy - p.y, input.mouse.wx - p.x);
-  // Shoot.
+  // Weapon switching (1/2/3 or Q to cycle).
+  if (input.pressed('1')) this.switchWeapon('pistol', audio);
+  else if (input.pressed('2')) this.switchWeapon('smg', audio);
+  else if (input.pressed('3')) this.switchWeapon('shotgun', audio);
+  else if (input.pressed('q')) {
+    const i = WEAPON_ORDER.indexOf(p.weapon);
+    this.switchWeapon(WEAPON_ORDER[(i + 1) % WEAPON_ORDER.length], audio);
+  }
+  // Shoot (weapon-aware: rate, damage, range, pellets + spread).
+  const w = WEAPONS[p.weapon] || WEAPONS.pistol;
   if ((input.mouse.down || input.mouse.clicked) && this.shootT <= 0 && p.ammo > 0) {
-    this.shootT = PISTOL_RATE; p.ammo--;
+    this.shootT = w.rate; p.ammo--;
+    if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = p.ammo;
     audio.shot();
-    this.fireBullet(p.x, p.y, p.aim, true);
+    for (let i = 0; i < w.pellets; i++) {
+      const spread = w.spread ? (this.rng() * 2 - 1) * w.spread : 0;
+      this.fireBullet(p.x, p.y, p.aim + spread, true, w.damage, w.range);
+    }
+    // Muzzle flash + ejected shell casing.
     this.burst(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16, '#ffd76a', 4, 90);
-    this.cam.shake = Math.max(this.cam.shake, 0.12);
+    this.particles.push({
+      x: p.x + Math.cos(p.aim + 1.2) * 10, y: p.y + Math.sin(p.aim + 1.2) * 10,
+      vx: Math.cos(p.aim + 1.2) * 60, vy: Math.sin(p.aim + 1.2) * 60 - 40,
+      life: 0.5, max: 0.5, color: '#e8c85a', size: 2, kind: 'casing',
+    });
+    this.cam.shake = Math.max(this.cam.shake, p.weapon === 'shotgun' ? 0.22 : 0.12);
     if (this.peds.some(pd => !pd.dead && dist(pd.x, pd.y, p.x, p.y) < 320) || this.cops.length) this.addWanted(4, 'shot');
   }
   // Enter a car (never a police car — those are locked).
@@ -298,15 +446,50 @@ World.prototype.updatePlayer = function (dt, input, audio) {
     const car = this.nearestCar(p.x, p.y, 64, true);
     if (car) this.enterCar(car, audio);
   }
-  // Pick up cash / health / ammo lying around.
+  // Pick up cash / health / ammo / armor / weapons lying around.
   for (const pk of this.pickups) {
     if (!pk.taken && dist2(p.x, p.y, pk.x, pk.y) < 36 * 36) {
       pk.taken = true;
       if (pk.kind === 'cash') { p.cash += pk.amount; audio.cash(); this.showMsg(`+$${pk.amount}`, '', 1.2); }
       else if (pk.kind === 'health') { p.hp = Math.min(PLAYER_HEALTH, p.hp + 40); audio.pickup(); this.showMsg('+40 HEALTH', '', 1.2); }
-      else { p.ammo += 12; audio.pickup(); this.showMsg('+12 AMMO', '', 1.2); }
+      else if (pk.kind === 'armor') { p.armor = ARMOR_MAX; audio.pickup(); this.showMsg('BODY ARMOR', 'Soaks up damage first', 1.5); }
+      else if (pk.kind === 'weapon') {
+        const key = pk.weapon || 'smg';
+        if (!p.weapons[key]) p.weapons[key] = { ammo: 0 };
+        p.weapons[key].ammo += key === 'smg' ? 60 : 12;
+        this.switchWeapon(key, audio);
+        this.showMsg((WEAPONS[key] || {}).name || 'WEAPON', 'Press 1/2/3 to switch', 1.8);
+      }
+      else {
+        p.ammo += 12;
+        if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = p.ammo;
+        audio.pickup(); this.showMsg('+12 AMMO', '', 1.2);
+      }
     }
   }
+};
+
+World.prototype.switchWeapon = function (key, audio) {
+  const p = this.player;
+  if (!WEAPONS[key] || p.weapon === key) return;
+  if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = p.ammo;
+  p.weapon = key;
+  if (!p.weapons[key]) p.weapons[key] = { ammo: 0 };
+  p.ammo = p.weapons[key].ammo;
+  this.shootT = Math.max(this.shootT, 0.15);
+  if (audio) audio.click();
+};
+
+// Damage the player: body armor soaks it first, then health.
+World.prototype.damagePlayer = function (n) {
+  const p = this.player;
+  if (p.invuln > 0) return;
+  if ((p.armor || 0) > 0) {
+    const soaked = Math.min(p.armor, n);
+    p.armor -= soaked; n -= soaked;
+  }
+  p.hp -= n;
+  if (p.hp <= 0) this.wastePlayer();
 };
 
 World.prototype.nearestCar = function (x, y, maxD, skipPolice) {
@@ -321,6 +504,11 @@ World.prototype.nearestCar = function (x, y, maxD, skipPolice) {
 
 World.prototype.enterCar = function (car, audio) {
   const p = this.player;
+  // Mission vehicles (the armored truck, the race rival) are locked.
+  if (car.driver === 'truck' || car.driver === 'racer') {
+    this.showMsg('LOCKED', 'That one is not yours to take.', 1.2);
+    return;
+  }
   if (car.driver === 'traffic') {
     // Steal it: the driver bails and runs.
     this.addPed(false, car.x + 30, car.y + 10);
@@ -350,16 +538,41 @@ World.prototype.exitCar = function (audio) {
 
 World.prototype.updatePlayerCar = function (dt, input, audio) {
   const p = this.player, car = p.car;
+  const spec = VEHICLES[car.kind] || VEHICLES.sedan;
   const ax = input.axis();
   // ax.y: -1 = W (accelerate), +1 = S (brake/reverse); ax.x steers.
-  if (ax.y < 0) car.speed += CAR_ACCEL * dt;
-  else if (ax.y > 0) car.speed -= (car.speed > 10 ? CAR_BRAKE : CAR_REVERSE) * dt;
+  car.brakeLight = 0;
+  if (car.air > 0) {
+    // Airborne off a stunt ramp: no drive, gentle steering, then land.
+    car.air -= dt;
+    car.a += ax.x * spec.turn * 0.4 * dt;
+    if (car.air <= 0) {
+      car.air = 0;
+      const bonus = Math.round((car.airTime || 0) * 60);
+      if (bonus >= 30) { p.cash += bonus; this.showMsg(`STUNT +$${bonus}`, 'Nice air!', 1.5); audio.cash(); }
+      this.burst(car.x, car.y, '#cfc8b8', 8, 120);
+      this.cam.shake = Math.max(this.cam.shake, 0.18);
+      car.airTime = 0;
+    }
+  } else if (ax.y < 0) car.speed += spec.accel * dt;
+  else if (ax.y > 0) { car.speed -= (car.speed > 10 ? CAR_BRAKE : CAR_REVERSE) * dt; car.brakeLight = 0.2; }
   else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 140 * dt);
-  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, CAR_MAX);
-  const steer = ax.x * CAR_TURN * clamp(Math.abs(car.speed) / 160, 0.15, 1) * (car.speed < 0 ? -1 : 1);
-  car.a += steer * dt * (input.keys[' '] ? 1.6 : 1);
+  car.speed = clamp(car.speed, -CAR_MAX_REVERSE, spec.max);
+  const steer = ax.x * spec.turn * clamp(Math.abs(car.speed) / 160, 0.15, 1) * (car.speed < 0 ? -1 : 1);
+  if (car.air <= 0) car.a += steer * dt * (input.keys[' '] ? 1.6 : 1);
   const nx = car.x + Math.cos(car.a) * car.speed * dt;
   const ny = car.y + Math.sin(car.a) * car.speed * dt;
+  // Stunt ramps: cross one fast and you're airborne.
+  if (car.air <= 0 && Math.abs(car.speed) > 260 && this.city.ramps) {
+    for (const rp of this.city.ramps) {
+      if (dist2(nx, ny, rp.x, rp.y) < 30 * 30) {
+        car.air = clamp(Math.abs(car.speed) / 700, 0.35, 0.9);
+        car.airTime = car.air;
+        audio.horn();
+        break;
+      }
+    }
+  }
   // Collisions: buildings, other cars, peds, water.
   const hitB = inBuilding(this.city, nx, ny, 16);
   if (hitB || inWater(this.city, nx, ny)) {
@@ -424,16 +637,16 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
   p.x = car.x; p.y = car.y; p.a = car.a;
 };
 
-World.prototype.fireBullet = function (x, y, angle, byPlayer) {
+World.prototype.fireBullet = function (x, y, angle, byPlayer, damage = PISTOL_DAMAGE, range = PISTOL_RANGE) {
   // Step along the ray; first enemy / car / building hit takes the shot.
   const step = 14;
-  for (let d = 20; d < PISTOL_RANGE; d += step) {
+  for (let d = 20; d < range; d += step) {
     const bx = x + Math.cos(angle) * d, by = y + Math.sin(angle) * d;
     if (inBuilding(this.city, bx, by, 0)) { this.burst(bx, by, '#cfc8b8', 4, 80); return; }
     for (const pd of this.peds) {
       if (pd.dead) continue;
       if (dist2(bx, by, pd.x, pd.y) < 16 * 16) {
-        pd.hp -= PISTOL_DAMAGE;
+        pd.hp -= damage;
         this.burst(pd.x, pd.y, '#ff5b5b', 6, 110);
         if (pd.hp <= 0) this.killPed(pd, byPlayer);
         return;
@@ -441,9 +654,8 @@ World.prototype.fireBullet = function (x, y, angle, byPlayer) {
     }
     for (const c of this.cars) {
       if (dist2(bx, by, c.x, c.y) < 30 * 30) {
-        c.hp -= PISTOL_DAMAGE * 0.6;
+        c.hp -= damage * 0.6;
         this.burst(bx, by, '#ffd76a', 5, 100);
-        if (c.hp <= 0 && c.driver === 'player') { /* player's car can be shot out */ }
         return;
       }
     }
@@ -458,41 +670,69 @@ World.prototype.killPed = function (pd, byPlayer) {
     this.addWanted(10, 'kill');
     const cash = pd.enemy ? ri(this.rng, 40, 90) : 0;
     if (cash) this.pickups.push({ x: pd.x, y: pd.y, kind: 'cash', amount: cash, taken: false });
+    // Armed rivals sometimes drop their gun.
+    if (pd.enemy && this.rng() < 0.35) {
+      this.pickups.push({ x: pd.x + 14, y: pd.y + 10, kind: 'weapon', weapon: this.rng() < 0.6 ? 'smg' : 'shotgun', taken: false });
+    }
   }
 };
 
 // ---- traffic, pedestrians, police, wanted, missions ----
-World.prototype.updateTraffic = function (dt) {
+World.prototype.updateTraffic = function (dt, audio) {
   const p = this.player;
   for (let i = this.cars.length - 1; i >= 0; i--) {
     const c = this.cars[i];
-    if (c.driver !== 'traffic') continue;
-    // Follow the route, one node at a time, on the right-hand lane.
+    if (c.driver !== 'traffic' && c.driver !== 'truck') continue;
+    // The armored truck stops for good once it's been cracked open (heist).
+    if (c.driver === 'truck' && c.hp <= 90) { c.speed = 0; c.brakeLight = 0.2; continue; }
+    // Follow the route, one node at a time, keeping to the right-hand lane:
+    // aim at a point offset right of the centre line so opposing flows pass
+    // cleanly and queues form in-lane instead of bunching at intersections.
     const target = c.path[c.pathI];
     if (!target) { this.planRoute(c, true); continue; }
     const dx = target.x - c.x, dy = target.y - c.y;
     const d = Math.hypot(dx, dy);
     if (d < 26) { c.pathI++; if (c.pathI >= c.path.length) this.planRoute(c, true); continue; }
     const want = Math.atan2(dy, dx);
-    c.a = turnToward(c.a, want, 2.2 * dt);
-    // Slow for the car ahead.
-    let ahead = false;
+    const laneX = target.x + Math.cos(want + Math.PI / 2) * 11;
+    const laneY = target.y + Math.sin(want + Math.PI / 2) * 11;
+    c.a = turnToward(c.a, Math.atan2(laneY - c.y, laneX - c.x), 2.2 * dt);
+    // Gap-keeping: find the nearest car ahead in-lane and match its pace,
+    // slowing smoothly as the gap closes (no more binary stop/go bunching).
+    let gap = Infinity, aheadSpeed = TRAFFIC_SPEED;
     for (const o of this.cars) {
       if (o === c) continue;
       const ox = o.x - c.x, oy = o.y - c.y;
       const along = ox * Math.cos(c.a) + oy * Math.sin(c.a);
       const side = Math.abs(-ox * Math.sin(c.a) + oy * Math.cos(c.a));
-      if (along > 0 && along < 70 && side < 26) { ahead = true; break; }
+      if (along > 0 && along < 150 && side < 26 && along < gap) { gap = along; aheadSpeed = Math.abs(o.speed); }
     }
-    const targetSpeed = ahead ? 0 : TRAFFIC_SPEED;
+    let targetSpeed = TRAFFIC_SPEED;
+    if (gap < 52) targetSpeed = 0;
+    else if (gap < 150) targetSpeed = Math.min(TRAFFIC_SPEED, aheadSpeed + (gap - 52) * 1.6);
+    // Intersection queueing: ease off when the next node is close and another
+    // car is crossing it, so streams merge instead of piling up.
+    if (d < 90) {
+      for (const o of this.cars) {
+        if (o === c || o.driver === 'player') continue;
+        if (dist2(o.x, o.y, target.x, target.y) < 44 * 44 && Math.abs(o.speed) > 30) { targetSpeed = Math.min(targetSpeed, 30); break; }
+      }
+    }
+    const prevSpeed = c.speed;
     c.speed = lerp(c.speed, targetSpeed, 1 - Math.pow(0.05, dt));
+    c.brakeLight = c.speed < prevSpeed - 4 ? 0.2 : Math.max(0, (c.brakeLight || 0) - dt);
+    // Honk when stuck behind someone for a while.
+    if (gap < 52 && Math.abs(c.speed) < 8) {
+      c.honkT = (c.honkT || 0) + dt;
+      if (c.honkT > 2.2 && audio && dist(c.x, c.y, p.x, p.y) < 500) { audio.horn(); c.honkT = 0; }
+    } else c.honkT = 0;
     const nx = c.x + Math.cos(c.a) * c.speed * dt, ny = c.y + Math.sin(c.a) * c.speed * dt;
     if (!inBuilding(this.city, nx, ny, 14) && !inWater(this.city, nx, ny)) { c.x = nx; c.y = ny; }
     else { this.planRoute(c, true); }
     c.stuck += dt;
     if (c.stuck > 8) { this.planRoute(c, true); c.stuck = 0; }
     // Recycle far-away traffic so the streets stay busy near the player.
-    if (dist(c.x, c.y, p.x, p.y) > 1400) {
+    if (c.driver === 'traffic' && dist(c.x, c.y, p.x, p.y) > 1400) {
       const np = roadPoint(this.rng, this.city);
       const near = Math.abs(np.x - p.x) < 900 && Math.abs(np.y - p.y) < 700;
       if (near) { c.x = np.x; c.y = np.y; this.planRoute(c, true); }
@@ -517,10 +757,9 @@ World.prototype.updatePeds = function (dt) {
         this.burst(pd.x + Math.cos(aim) * 16, pd.y + Math.sin(aim) * 16, '#ffd76a', 3, 80);
         // Enemy bullet: hit chance falls with distance.
         if (this.rng() < clamp(0.55 - d / 900, 0.08, 0.5) && p.invuln <= 0) {
-          p.hp -= 9;
           this.burst(p.x, p.y, '#ff5b5b', 5, 90);
           this.cam.shake = Math.max(this.cam.shake, 0.2);
-          if (p.hp <= 0) this.wastePlayer();
+          this.damagePlayer(9);
         }
       }
       continue;
@@ -611,6 +850,93 @@ World.prototype.updatePolice = function (dt, audio) {
   }
 };
 
+// Marlin rival-crew cars: at 4-5 stars (and during the escort) they hunt the
+// player and ram — no bust, just damage and menace. Also drives the street-race
+// rival through the checkpoint list during mission 5.
+World.prototype.updateRivals = function (dt) {
+  const p = this.player;
+  const escortActive = this.mission.index === 6 && this.mission.stage === 1 && !this.mission.done;
+  const wantRivals = escortActive ? 2 : (this.stars() >= 4 ? 2 : 0);
+  const have = this.cars.filter(c => c.kind === 'rival').length;
+  this.rivalT -= dt;
+  if (have < wantRivals && this.rivalT <= 0) { this.spawnRivalCar(); this.rivalT = 6; }
+  if (wantRivals === 0) {
+    this.cars = this.cars.filter(c => c.kind !== 'rival' || dist(c.x, c.y, p.x, p.y) < 600);
+  }
+  for (const c of this.cars) {
+    if (c.kind !== 'rival') continue;
+    const dPlayer = dist(c.x, c.y, p.x, p.y);
+    const target = c.path[c.pathI];
+    if (dPlayer < 380) {
+      c.a = turnToward(c.a, angTo(c.x, c.y, p.x, p.y), 3.0 * dt);
+      c.speed = lerp(c.speed, VEHICLES.rival.max * 0.94, 1 - Math.pow(0.1, dt));
+    } else if (target) {
+      const d = dist(c.x, c.y, target.x, target.y);
+      if (d < 30) { c.pathI++; if (c.pathI >= c.path.length) this.planRoute(c, false); continue; }
+      c.a = turnToward(c.a, angTo(c.x, c.y, target.x, target.y), 3 * dt);
+      c.speed = lerp(c.speed, VEHICLES.rival.max * 0.85, 1 - Math.pow(0.1, dt));
+    }
+    const nx = c.x + Math.cos(c.a) * c.speed * dt, ny = c.y + Math.sin(c.a) * c.speed * dt;
+    if (!inBuilding(this.city, nx, ny, 15) && !inWater(this.city, nx, ny)) { c.x = nx; c.y = ny; }
+    else { this.planRoute(c, false); }
+    if (!p.onFoot && p.car && dist2(c.x, c.y, p.car.x, p.car.y) < 48 * 48) {
+      p.car.hp -= 18 * dt;
+      p.car.speed *= (1 - 0.35 * dt);
+      c.speed *= (1 - 0.7 * dt);
+      if (this.rng() < dt * 2) this.burst((c.x + p.car.x) / 2, (c.y + p.car.y) / 2, '#ffd76a', 4, 100);
+    }
+  }
+  // The street-race rival drives the checkpoint list (mission 5).
+  if (this.mission.index === 4 && this.mission.stage === 1 && this.mission.data.rivalId) {
+    const r = this.cars.find(c => c.id === this.mission.data.rivalId);
+    const cps = this.mission.data.checkpoints || [];
+    const cp = cps[this.mission.data.rivalCpI || 0];
+    if (r && cp) {
+      const d = dist(r.x, r.y, cp.x, cp.y);
+      if (d < 54) this.mission.data.rivalCpI = (this.mission.data.rivalCpI || 0) + 1;
+      else {
+        r.a = turnToward(r.a, angTo(r.x, r.y, cp.x, cp.y), 2.8 * dt);
+        r.speed = lerp(r.speed, 430, 1 - Math.pow(0.08, dt));
+        const nx = r.x + Math.cos(r.a) * r.speed * dt, ny = r.y + Math.sin(r.a) * r.speed * dt;
+        if (!inBuilding(this.city, nx, ny, 15) && !inWater(this.city, nx, ny)) { r.x = nx; r.y = ny; }
+      }
+    }
+  }
+};
+
+// Rosa's Garage (repair + respray clears the heat for cash) and the safehouse
+// (heal + save) — drive/walk in and it happens, with a cooldown.
+World.prototype.updateServices = function (dt, audio) {
+  const p = this.player, c = this.city;
+  if (this.shopT > 0) this.shopT -= dt;
+  if (this.safeT > 0) this.safeT -= dt;
+  // Garage: in a car, near the marker, damaged or wanted → $100 fix.
+  if (!p.onFoot && p.car && this.shopT <= 0 && dist2(p.x, p.y, c.garage.x, c.garage.y) < 52 * 52) {
+    const needsFix = p.car.hp < (VEHICLES[p.car.kind] || VEHICLES.sedan).hp || this.wanted > 0;
+    if (needsFix && p.cash >= 100) {
+      p.cash -= 100;
+      p.car.hp = (VEHICLES[p.car.kind] || VEHICLES.sedan).hp;
+      this.wanted = 0;
+      this.cars = this.cars.filter(car => car.kind !== 'police');
+      this.cops = [];
+      this.showMsg('REPAIRED + RESPRAYED', 'Heat cleared — $100', 2);
+      audio.cash();
+      this.shopT = 8;
+      this.saveGame();
+    }
+  }
+  // Safehouse: on foot, near the door → patch up and save.
+  if (p.onFoot && this.safeT <= 0 && dist2(p.x, p.y, c.safehouse.x, c.safehouse.y) < 50 * 50) {
+    if (p.hp < PLAYER_HEALTH) {
+      p.hp = PLAYER_HEALTH;
+      this.showMsg('SAFEHOUSE', 'Patched up. Progress saved.', 2);
+      audio.pickup();
+      this.safeT = 10;
+      this.saveGame();
+    }
+  }
+};
+
 World.prototype.updateWanted = function (dt) {
   const p = this.player;
   // Seen if any police is close (or a foot cop is near).
@@ -658,6 +984,76 @@ World.prototype.updateMissions = function (dt) {
     else if (m.stage === 1 && !this.peds.some(pd => pd.enemy && !pd.dead)) {
       m.stage = 2; this.addWanted(60, 'shootout'); this.showMsg('IT\'S DONE', 'The precinct is coming — run!', 3); this.setObjective();
     } else if (m.stage === 2 && at(c.safehouse.x, c.safehouse.y, 50)) { this.missionPassed(); setTimeout(() => this.nextMission(), 1500); }
+  } else if (m.index === 4) {
+    // Street Kings: checkpoint race vs the rival.
+    if (m.stage === 0 && at(c.garage.x, c.garage.y + 140, 52)) {
+      m.stage = 1; m.timer = 150; m.data.cpI = 0; m.data.rivalCpI = 0;
+      this.spawnRivalRacer();
+      this.showMsg('GO!', 'Five checkpoints — beat the rival to the line.', 3);
+      this.setObjective();
+    } else if (m.stage === 1) {
+      m.timer -= dt;
+      const cps = m.data.checkpoints || [];
+      const cp = cps[m.data.cpI || 0];
+      if (cp && at(cp.x, cp.y, 56)) {
+        m.data.cpI = (m.data.cpI || 0) + 1;
+        this.showMsg(`CHECKPOINT ${m.data.cpI}/5`, '', 1.2);
+        if (m.data.cpI >= cps.length) {
+          const r = this.cars.find(car => car.id === m.data.rivalId);
+          if (r) r.driver = 'traffic';
+          this.missionPassed(); setTimeout(() => this.nextMission(), 1200);
+        } else this.setObjective();
+      } else if ((m.data.rivalCpI || 0) >= cps.length || m.timer <= 0) {
+        // Rival finished first (or the clock died): reset to the start line.
+        this.showMsg('RACE LOST', 'The rival takes the crown. Back to the start line.', 3);
+        const r = this.cars.find(car => car.id === m.data.rivalId);
+        if (r) r.driver = 'traffic';
+        m.stage = 0; m.data.cpI = 0; m.data.rivalCpI = 0; m.timer = 0;
+        this.setObjective();
+      } else this.setObjective();
+    }
+  } else if (m.index === 5) {
+    // Armored Score: crack the truck, grab the cash, deliver it.
+    const truck = this.cars.find(car => car.id === m.data.truckId);
+    if (m.stage === 0) {
+      if (!truck) { this.setupHeist(); }
+      else if (truck.hp <= 90) {
+        m.stage = 1;
+        m.data.cashAt = { x: truck.x + 30, y: truck.y + 20 };
+        this.addWanted(35, 'heist');
+        this.showMsg('TRUCK CRACKED', 'Grab the cash!', 2.5);
+        this.setObjective();
+      } else this.setObjective();
+    } else if (m.stage === 1 && m.data.cashAt && at(m.data.cashAt.x, m.data.cashAt.y, 48)) {
+      m.stage = 2;
+      this.showMsg('CASH SECURED', 'Get it to Rosa\'s Garage.', 2.5);
+      this.setObjective();
+    } else if (m.stage === 2 && at(c.garage.x, c.garage.y, 48)) { this.missionPassed(); setTimeout(() => this.nextMission(), 1200); }
+  } else if (m.index === 6) {
+    // Escort: pick up the accountant, get him to the safehouse.
+    if (m.stage === 0 && at(c.hospital.x, c.hospital.y, 52)) {
+      m.stage = 1;
+      this.showMsg('ACCOUNTANT ABOARD', 'Safehouse — and watch for Marlin cars.', 3);
+      this.setObjective();
+    } else if (m.stage === 1 && at(c.safehouse.x, c.safehouse.y, 52)) { this.missionPassed(); setTimeout(() => this.nextMission(), 1200); }
+  } else if (m.index === 7) {
+    // Last Delivery: timed chain, then the docks.
+    m.timer -= dt;
+    const pts = m.data.points || [];
+    const dp = pts[m.data.pi || 0];
+    if (dp && at(dp.x, dp.y, 50)) {
+      m.data.pi = (m.data.pi || 0) + 1;
+      p.cash += 120;
+      m.timer = 90;
+      this.showMsg(`DELIVERY ${m.data.pi}/${pts.length}`, '+$120', 1.4);
+      this.setObjective();
+    } else if (!dp && at(c.docks.x - 60, c.docks.y, 52)) {
+      this.missionPassed(); setTimeout(() => this.nextMission(), 1500);
+    } else if (m.timer <= 0) {
+      this.showMsg('TOO SLOW', 'The drop moved on — the chain restarts.', 3);
+      m.data.pi = 0; m.timer = 90;
+      this.setObjective();
+    } else this.setObjective();
   }
   if (m.index === 1 && m.timer > 0) this.setObjective();
 };
@@ -681,21 +1077,28 @@ World.prototype.updateParticles = function (dt) {
 
 World.prototype.updateJob = function (dt) {
   if (!this.storyDone || this.mission.index < MISSIONS.length - 1) return;
-  // Free-roam taxi fares: a fare marker appears; drive a customer to the destination.
+  // Free-roam work: taxi fares and parcel deliveries alternate. Drive to the
+  // pickup marker, then to the destination marker, for cash.
   if (!this.job) {
     if (this.rng() < dt * 0.05) {
-      const spots = [this.city.garage, this.city.docks, this.city.hospital, this.city.pier, this.city.safehouse];
+      const spots = [this.city.garage, this.city.docks, this.city.hospital, this.city.pier, this.city.safehouse, this.city.marina || this.city.pier];
       const a = pick(this.rng, spots), b = pick(this.rng, spots);
-      if (a !== b) this.job = { stage: 0, from: a, to: b, fare: ri(this.rng, 80, 220) };
+      if (a !== b) {
+        const delivery = this.rng() < 0.45;
+        this.job = { stage: 0, from: a, to: b, fare: ri(this.rng, 80, 220), kind: delivery ? 'delivery' : 'fare' };
+      }
     }
     return;
   }
   const p = this.player;
   if (this.job.stage === 0) {
-    if (dist2(p.x, p.y, this.job.from.x, this.job.from.y) < 50 * 50) { this.job.stage = 1; this.showMsg('FARE PICKED UP', `Take them to ${this.job.to.label} — $${this.job.fare}`, 2.5); }
+    if (dist2(p.x, p.y, this.job.from.x, this.job.from.y) < 50 * 50) {
+      this.job.stage = 1;
+      this.showMsg(this.job.kind === 'delivery' ? 'PARCEL COLLECTED' : 'FARE PICKED UP', `Take ${this.job.kind === 'delivery' ? 'it' : 'them'} to ${this.job.to.label} — $${this.job.fare}`, 2.5);
+    }
   } else if (dist2(p.x, p.y, this.job.to.x, this.job.to.y) < 50 * 50) {
     p.cash += this.job.fare; this.jobsDone++;
-    this.showMsg(`FARE +$${this.job.fare}`, 'Nice driving.', 2);
+    this.showMsg(`${this.job.kind === 'delivery' ? 'DELIVERY' : 'FARE'} +$${this.job.fare}`, 'Nice driving.', 2);
     this.job = null; this.saveGame();
   }
   this.setObjective();
@@ -709,6 +1112,7 @@ World.prototype.bustPlayer = function () {
   this.cars = this.cars.filter(c => c.kind !== 'police');
   if (!p.onFoot) this.exitCar(null);
   p.x = this.city.precinct.x; p.y = this.city.precinct.y; p.hp = PLAYER_HEALTH; p.ammo = 12; p.invuln = 3;
+  if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = 12;
   this.screen = 'busted';
   setTimeout(() => { if (this.screen === 'busted') this.screen = 'play'; }, 2600);
   this.saveGame();
@@ -722,6 +1126,7 @@ World.prototype.wastePlayer = function () {
   this.cars = this.cars.filter(c => c.kind !== 'police');
   if (!p.onFoot) this.exitCar(null);
   p.x = this.city.hospital.x; p.y = this.city.hospital.y; p.hp = PLAYER_HEALTH; p.ammo = 12; p.invuln = 3;
+  if (p.weapons[p.weapon]) p.weapons[p.weapon].ammo = 12;
   this.screen = 'wasted';
   setTimeout(() => { if (this.screen === 'wasted') this.screen = 'play'; }, 2600);
   this.saveGame();

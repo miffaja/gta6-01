@@ -38,10 +38,11 @@ export function stageShot(name, world) {
   world.reset();
   world.shotMode = true; // staged scenes never save (no localStorage writes)
   if (name === 'start') {
-    // Title screen over a sunny downtown view: Vic on foot beside a red sports car.
+    // Title screen over a golden-hour downtown: tall towers, long shadows,
+    // Vic on foot beside a red sports car.
     world.screen = 'title';
-    world.timeH = 10;
-    const car = { id: 9001, x: roadCenterX(6), y: roadCenterY(4) + 10, a: Math.PI / 2, speed: 0, color: PAL.sport, kind: 'sport', driver: null, path: [], pathI: 0, hp: 100, stuck: 0 };
+    world.timeH = 18.2;
+    const car = { id: 9001, x: roadCenterX(6), y: roadCenterY(4) + 10, a: Math.PI / 2, speed: 0, color: PAL.sport, kind: 'sport', driver: null, path: [], pathI: 0, hp: 90, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.cars.push(car);
     world.player.x = roadCenterX(6) - 40; world.player.y = roadCenterY(4) + 30;
     world.cam.x = roadCenterX(6); world.cam.y = roadCenterY(4); world.cam.zoom = 0.85;
@@ -51,10 +52,10 @@ export function stageShot(name, world) {
   }
   world.screen = 'play';
   if (name === 'drive') {
-    // Midday drive down the main avenue: Vic in a sports car, traffic and peds around.
-    // Clear the road ahead so the staged car is actually moving, not stuck in traffic.
-    world.timeH = 14;
-    const car = { id: 9002, x: roadCenterX(3), y: roadCenterY(4), a: 0, speed: 320, color: PAL.sport, kind: 'sport', driver: 'player', path: [], pathI: 0, hp: 100, stuck: 0 };
+    // Golden-hour cruise down the main avenue past the downtown towers:
+    // Vic in a sports car, mixed traffic (truck, bus, pickup) and peds around.
+    world.timeH = 18.0;
+    const car = { id: 9002, x: roadCenterX(3), y: roadCenterY(4), a: 0, speed: 340, color: PAL.sport, kind: 'sport', driver: 'player', path: [], pathI: 0, hp: 90, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.cars.push(car);
     world.player.onFoot = false; world.player.car = car; world.player.x = car.x; world.player.y = car.y;
     for (const c of world.cars) {
@@ -67,38 +68,52 @@ export function stageShot(name, world) {
     return { screen: 'play' };
   }
   if (name === 'wanted') {
-    // Dusk pursuit: 3 stars, two police cars closing in on Vic's sedan.
-    world.timeH = 18.5;
-    const car = { id: 9003, x: roadCenterX(5), y: roadCenterY(5), a: 0, speed: 380, color: '#c0392b', kind: 'sedan', driver: 'player', path: [], pathI: 0, hp: 300, stuck: 0 };
+    // Night pursuit: 4 stars, police lightbars strobing, headlight cones on
+    // wet asphalt, a Marlin rival car joining the chase.
+    world.timeH = 21.5;
+    world.rain = 1;
+    const car = { id: 9003, x: roadCenterX(5), y: roadCenterY(5), a: 0, speed: 400, color: '#c0392b', kind: 'sedan', driver: 'player', path: [], pathI: 0, hp: 300, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.cars.push(car);
     world.player.onFoot = false; world.player.car = car; world.player.x = car.x; world.player.y = car.y;
-    world.wanted = 62;
-    // Clear a wide corridor ahead so the chase is a chase, not a pile-up: any
-    // traffic that could reach the player's path (including cars crossing at
-    // intersections) is moved away.
+    world.wanted = 84;
     for (const c of world.cars) {
       if (c !== car && c.driver === 'traffic' && c.x > car.x - 150 && c.x < car.x + 1300 && Math.abs(c.y - car.y) < 250) {
         c.x = roadCenterX(1); c.y = roadCenterY(1); world.planRoute(c, true);
       }
     }
     for (let k = 0; k < 2; k++) {
-      const pc = { id: 9010 + k, x: car.x - 320 - k * 160, y: car.y + (k ? 40 : -40), a: 0, speed: 360, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 120, stuck: 0 };
+      const pc = { id: 9010 + k, x: car.x - 320 - k * 160, y: car.y + (k ? 40 : -40), a: 0, speed: 380, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
       world.planRoute(pc, false);
       world.cars.push(pc);
     }
+    const rival = { id: 9020, x: car.x - 520, y: car.y + 90, a: 0, speed: 400, color: '#7d3c98', kind: 'rival', driver: 'rival', path: [], pathI: 0, hp: 130, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.planRoute(rival, false);
+    world.cars.push(rival);
     input.keys.w = true;
     runSteps(world, 1.5, input);
     return { screen: 'play' };
   }
-  // mission: the docks shootout (mission 4) in golden-hour light — Vic on foot, Marlin crew ahead.
-  world.timeH = 17;
-  world.mission.index = 3; world.mission.stage = 1; world.mission.done = false;
-  world.player.x = city.docks.x - 260; world.player.y = city.docks.y + 40;
-  world.player.ammo = 24; world.player.hp = 100; world.player.invuln = 6;
-  world.spawnEnemies();
+  // mission: the armored-truck heist at golden hour — Vic on foot with an SMG,
+  // the cracked cash truck ahead, Marlin guards closing in, heat rising.
+  world.timeH = 17.8;
+  world.mission.index = 5; world.mission.stage = 0; world.mission.done = false;
+  world.setupHeist();
+  const truck = world.cars.find(c => c.id === world.mission.data.truckId);
+  if (truck) {
+    truck.x = city.docks.x - 320; truck.y = city.docks.y; truck.a = 0; truck.speed = 0; truck.hp = 120;
+    world.planRoute(truck, true);
+  }
+  world.player.x = city.docks.x - 430; world.player.y = city.docks.y + 30;
+  world.player.weapon = 'smg';
+  world.player.weapons.smg.ammo = 60; world.player.ammo = 60;
+  world.player.hp = 100; world.player.armor = 60; world.player.invuln = 6;
+  world.wanted = 45;
+  world.addPed(true, city.docks.x - 240, city.docks.y - 50);
+  world.addPed(true, city.docks.x - 200, city.docks.y + 60);
   for (const pd of world.peds) if (pd.enemy) pd.shootT = 2.5;
-  input.mouse.wx = city.docks.x - 120; input.mouse.wy = city.docks.y;
-  runSteps(world, 1.0, input);
+  input.mouse.wx = city.docks.x - 300; input.mouse.wy = city.docks.y;
+  input.mouse.down = true;
+  runSteps(world, 0.7, input);
   world.setObjective();
   return { screen: 'play' };
 }
