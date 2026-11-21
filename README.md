@@ -37,14 +37,14 @@ Built by an AI agent for make.fun's "Make GTA 6" bounty. Everything is original:
 ## Systems
 
 - **8 story missions** — *The Pickup*, *Cash Run*, *Heat*, *The Docks*, *Street Kings* (checkpoint race), *Armored Score* (cash-truck heist), *Escort*, and *Last Delivery*, each with objectives, a minimap marker and a cash reward; free-roam taxi fares and parcel deliveries after the story.
-- **Wanted system, 0–5 stars** — crimes raise your heat; police cars pursue and ram, foot cops bust you on touch, and at 4–5 stars the rival Marlin crew joins the chase. Busted or wasted costs $200.
+- **Wanted system, 0–5 stars** — crimes raise your heat; police cars pursue and ram, foot cops bust you on touch, at 3+ stars a police helicopter shadows you with its spotlight (a second air unit joins at 5 stars) and the precinct lays spike strips across the avenue — shred your tires and you limp until Rosa fits new rubber; a patrol boat works the harbor basin when the heat is on near the docks, and at 4–5 stars the rival Marlin crew joins the chase. Busted or wasted costs $200.
 - **3 weapons + body armor** — pistol, SMG and shotgun (own ammo each, switched with 1/2/3 or Q); armor soaks damage first. Armed rivals shoot back and sometimes drop their gun.
 - **Day/night cycle + rain** — golden-hour sun, streetlights and headlights at night, lit windows and neon signs downtown, rain with a wet sheen on the roads, and shadows that follow the sun.
-- **A living city** — traffic that keeps its lane, brakes for the car ahead and honks when stuck; pedestrians who stroll the sidewalks and flee gunfire; a beach, marina with bobbing boats, a lighthouse with a sweeping beam, parks, plazas and a container port.
+- **A living city** — traffic that keeps its lane, brakes for the car ahead and honks when stuck; pedestrians who stroll the sidewalks and flee gunfire; a beach, marina with bobbing boats, gulls circling the harbor, a lighthouse with a sweeping beam, parks, plazas, sidewalk crates and dumpsters, and a working container port with gantry cranes.
 - **Vehicles with character** — sedans, sports cars, taxis, vans, pickups, trucks and buses, each with its own handling, size and look; spinning wheels, brake lights, headlight pools on wet asphalt. Hit a stunt ramp fast for airtime cash.
 - **Places that matter** — Rosa's Garage repairs and resprays for $100 (heat gone); the safehouse heals and saves; the hospital, precinct, docks and marina anchor the story.
 - **20 collectible postcards** — hidden across the city, $100 each and a $1,000 bonus for the full set; the HUD tracks your count and the minimap hints when one is close.
-- **HUD + minimap** — health, armor, cash, weapon and ammo, postcard counter, speedometer, wanted stars, the clock, your objective, and a live minimap with police, rivals, landmarks and your marker.
+- **HUD + minimap** — health, armor, cash, weapon and ammo, postcard counter, speedometer (with a shredded-tire warning), wanted stars that pulse as the heat rises, the clock, your objective, and a live minimap with district tints, police, rivals, air units, landmarks and your marker.
 - **Save, pause, polish** — title screen, pause menu, localStorage save; synthesized engine/siren/gunshot sounds and a procedural music loop; screen shake, skid marks, shell casings, floating cash popups.
 
 ## Screenshots

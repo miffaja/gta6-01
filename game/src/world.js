@@ -63,6 +63,25 @@ export class World {
     this.shotMode = false; // staged screenshots never write to localStorage
     this.wanted = 0; this.wantedSeen = false;
     this.heli = null; // police helicopter (spawns at 3+ stars, see updateHeli)
+    this.heli2 = null; // second air unit, joins at 5 stars (wanted >= 80)
+    this.spikes = []; // deployed spike strips (3+ stars, see updatePolice)
+    this.spikeT = 12; // first strip comes out early in a hot chase
+    this.boat = null; // police patrol boat working the docks harbor basin
+    // Gulls on fixed orbits over the harbor + beach; render.js phases their
+    // positions from world.time, so they need no per-frame state.
+    this.gulls = [];
+    for (let k = 0; k < 9; k++) {
+      this.gulls.push({
+        cx: WORLD_W - 120 + this.rng() * 200, cy: 880 + this.rng() * 320,
+        r: 40 + this.rng() * 70, sp: 0.25 + this.rng() * 0.3, ph: this.rng() * Math.PI * 2,
+      });
+    }
+    for (let k = 0; k < 5; k++) {
+      this.gulls.push({
+        cx: 300 + this.rng() * (WORLD_W - 600), cy: WORLD_H + 60 + this.rng() * 60,
+        r: 50 + this.rng() * 60, sp: 0.2 + this.rng() * 0.25, ph: this.rng() * Math.PI * 2,
+      });
+    }
     this.player = {
       x: c.spawn.x, y: c.spawn.y, a: -Math.PI / 2, hp: PLAYER_HEALTH, cash: START_CASH,
       ammo: 24, onFoot: true, car: null, speed: 0, aim: -Math.PI / 2, bustT: 0, invuln: 0,
@@ -415,6 +434,7 @@ World.prototype.update = function (dt, input, audio) {
   this.updatePeds(dt);
   this.updatePolice(dt, audio);
   this.updateHeli(dt);
+  this.updateBoat(dt);
   this.updateRivals(dt);
   this.updateWanted(dt);
   this.updateMissions(dt);
@@ -625,9 +645,13 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
   else if (ax.y > 0) { car.speed -= (car.speed > 10 ? CAR_BRAKE : CAR_REVERSE) * dt; car.brakeLight = 0.2; }
   else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 140 * dt);
   // A Rosa's Garage engine tune raises this car's top speed by 15%.
-  const topSpeed = spec.max * (car.upgrades && car.upgrades.engine ? 1.15 : 1);
+  let topSpeed = spec.max * (car.upgrades && car.upgrades.engine ? 1.15 : 1);
+  // Shredded tires (spike strip): the car limps — top speed cut to 45% and
+  // the steering wanders — until the garage fits new rubber.
+  if (car.tiresOut) topSpeed *= 0.45;
   car.speed = clamp(car.speed, -CAR_MAX_REVERSE, topSpeed);
-  const steer = ax.x * spec.turn * clamp(Math.abs(car.speed) / 160, 0.15, 1) * (car.speed < 0 ? -1 : 1);
+  const steer = ax.x * spec.turn * clamp(Math.abs(car.speed) / 160, 0.15, 1) * (car.speed < 0 ? -1 : 1)
+    + (car.tiresOut ? Math.sin(this.time * 7) * 0.35 * clamp(Math.abs(car.speed) / 200, 0, 1) : 0);
   if (car.air <= 0) car.a += steer * dt * (input.keys[' '] ? 1.6 : 1);
   const nx = car.x + Math.cos(car.a) * car.speed * dt;
   const ny = car.y + Math.sin(car.a) * car.speed * dt;
@@ -638,6 +662,24 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
         car.air = clamp(Math.abs(car.speed) / 700, 0.35, 0.9);
         car.airTime = car.air;
         if (audio.stunt) audio.stunt(); else audio.horn();
+        break;
+      }
+    }
+  }
+  // Spike strips: run over one and the tires are gone (the garage fixes
+  // them). The strip is a 56px segment laid across the road; measure the
+  // car's distance to that segment, not just to its centre.
+  if (car.air <= 0 && !car.tiresOut) {
+    for (const s of this.spikes) {
+      const ex = Math.cos(s.a + Math.PI / 2), ey = Math.sin(s.a + Math.PI / 2);
+      const t = clamp((nx - s.x) * ex + (ny - s.y) * ey, -28, 28);
+      const px = s.x + ex * t, py = s.y + ey * t;
+      if (dist2(nx, ny, px, py) < 16 * 16) {
+        car.tiresOut = true;
+        audio.crash(0.7);
+        this.burst(car.x, car.y, '#ffd76a', 14, 200);
+        this.cam.shake = Math.max(this.cam.shake, 0.4);
+        this.showMsg('TIRES SHREDDED', 'Get to Rosa\'s Garage!', 2);
         break;
       }
     }
@@ -929,6 +971,23 @@ World.prototype.updatePolice = function (dt, audio) {
       if (cop.bustT > 1.2) { this.bustPlayer(); return; }
     } else cop.bustT = Math.max(0, cop.bustT - dt * 2);
   }
+  // Spike strips: at 3+ stars the precinct lays a strip across the avenue
+  // ahead of a fleeing driver. Run over one and the tires shred — top speed
+  // collapses and the steering goes loose until Rosa fits new rubber.
+  if (this.wanted <= 0) this.spikes = [];
+  this.spikeT -= dt;
+  if (this.stars() >= 3 && !p.onFoot && p.car && this.spikeT <= 0 && this.spikes.length < 3) {
+    let sx = p.car.x + Math.cos(p.car.a) * 520, sy = p.car.y + Math.sin(p.car.a) * 520;
+    // Snap onto the nearest road centre line, strip laid across the road.
+    let bestD = Infinity, vertical = false;
+    for (const cx of this.city.roads.v) { const d = Math.abs(cx - sx); if (d < bestD) { bestD = d; sx = cx; vertical = true; } }
+    for (const cy of this.city.roads.h) { const d = Math.abs(cy - sy); if (d < bestD) { bestD = d; sy = cy; vertical = false; } }
+    this.spikes.push({ x: sx, y: sy, a: vertical ? Math.PI / 2 : 0, life: 90 });
+    this.spikeT = 22;
+    this.showMsg('SPIKE STRIP AHEAD', 'Watch the road!', 1.6);
+  }
+  for (const s of this.spikes) s.life -= dt;
+  this.spikes = this.spikes.filter(s => s.life > 0 && dist(s.x, s.y, p.x, p.y) < 1600);
 };
 
 // Police helicopter: at 3+ stars (wanted >= 60) an air unit shadows the
@@ -937,24 +996,79 @@ World.prototype.updatePolice = function (dt, audio) {
 // dies below 2 stars (wanted < 40). The flight path is driven by world.time
 // (a slow orbit), so it is deterministic for a given seed + inputs; the
 // spawn offset derives from the player's facing, no rng draws needed.
+// At 5 stars a second air unit joins, orbiting in counter-phase a touch
+// wider so the sky over a max-heat chase is never empty.
 World.prototype.updateHeli = function (dt) {
   const p = this.player;
   if (!this.heli && this.wanted >= 60) {
     const a = p.a + Math.PI; // come in from behind the player
     this.heli = { x: p.x + Math.cos(a) * 420, y: p.y + Math.sin(a) * 420 - 120, a: p.a };
   }
-  if (!this.heli) return;
-  if (this.wanted < 40) { this.heli = null; return; }
-  const oa = this.time * 0.35;
-  const hx = p.x + Math.cos(oa) * 260, hy = p.y + Math.sin(oa) * 260 - 60;
-  const px = this.heli.x, py = this.heli.y;
-  const k = 1 - Math.pow(0.02, dt);
-  this.heli.x = lerp(this.heli.x, hx, k);
-  this.heli.y = lerp(this.heli.y, hy, k);
-  // Face the direction of travel; when settled into the hover, face the player.
-  const mvx = this.heli.x - px, mvy = this.heli.y - py;
-  if (mvx * mvx + mvy * mvy > 0.01) this.heli.a = Math.atan2(mvy, mvx);
-  else this.heli.a = angTo(this.heli.x, this.heli.y, p.x, p.y);
+  if (!this.heli2 && this.wanted >= 80) {
+    const a = p.a; // second unit comes in head-on, from the front
+    this.heli2 = { x: p.x + Math.cos(a) * 460, y: p.y + Math.sin(a) * 460 - 100, a: p.a + Math.PI };
+  }
+  if (this.wanted < 40) { this.heli = null; this.heli2 = null; return; }
+  if (this.wanted < 80) this.heli2 = null;
+  const fly = (heli, phase, radius) => {
+    if (!heli) return;
+    const oa = this.time * 0.35 + phase;
+    const hx = p.x + Math.cos(oa) * radius, hy = p.y + Math.sin(oa) * radius - 60;
+    const px = heli.x, py = heli.y;
+    const k = 1 - Math.pow(0.02, dt);
+    heli.x = lerp(heli.x, hx, k);
+    heli.y = lerp(heli.y, hy, k);
+    // Face the direction of travel; when settled into the hover, face the player.
+    const mvx = heli.x - px, mvy = heli.y - py;
+    if (mvx * mvx + mvy * mvy > 0.01) heli.a = Math.atan2(mvy, mvx);
+    else heli.a = angTo(heli.x, heli.y, p.x, p.y);
+    // Rotor downwash: dust kicked outward under the hover, phased by
+    // world.time so the stream is deterministic for a given seed + inputs.
+    if (this.time % 0.1 < dt) {
+      for (let k = 0; k < 2; k++) {
+        const da = this.time * 2.3 + k * 2.4;
+        this.particles.push({
+          x: heli.x + Math.cos(da) * 26, y: heli.y + Math.sin(da) * 18 + 10,
+          vx: Math.cos(da) * 90, vy: Math.sin(da) * 60,
+          life: 0.55, max: 0.55, color: 'rgba(196,180,150,0.5)', size: 4, kind: 'dust',
+        });
+      }
+    }
+  };
+  fly(this.heli, 0, 260);
+  fly(this.heli2, Math.PI, 310);
+};
+
+// Police patrol boat: when the heat is on (2+ stars) and the player is near
+// Solmar Docks, a patrol boat works the harbor basin, tracking the player's
+// height along the quay with its lightbar going. Visual pressure like the
+// heli — the water keeps it from ever touching you.
+World.prototype.updateBoat = function (dt) {
+  const p = this.player;
+  const basin = { x0: WORLD_W + 10, x1: WORLD_W + 150, y0: 860, y1: 1180 };
+  const nearDocks = dist(p.x, p.y, WORLD_W, 1020) < 1000;
+  if (!this.boat && this.wanted >= 40 && nearDocks) {
+    this.boat = { x: basin.x0 + 60, y: basin.y1 - 40, a: -Math.PI / 2, speed: 0 };
+  }
+  if (!this.boat) return;
+  if (this.wanted < 40) { this.boat = null; return; }
+  const b = this.boat;
+  // Patrol: run up and down the basin toward the player's quay height,
+  // swinging out and back across the water as it goes.
+  const targetY = clamp(p.y, basin.y0 + 30, basin.y1 - 30);
+  const targetX = basin.x0 + 70 + Math.sin(this.time * 0.4) * 45;
+  b.a = turnToward(b.a, angTo(b.x, b.y, targetX, targetY), 1.6 * dt);
+  b.speed = lerp(b.speed, 95, 1 - Math.pow(0.1, dt));
+  b.x = clamp(b.x + Math.cos(b.a) * b.speed * dt, basin.x0 + 16, basin.x1 - 16);
+  b.y = clamp(b.y + Math.sin(b.a) * b.speed * dt, basin.y0 + 16, basin.y1 - 16);
+  // Wake foam trailing the hull.
+  if (this.time % 0.15 < dt) {
+    this.particles.push({
+      x: b.x - Math.cos(b.a) * 22, y: b.y - Math.sin(b.a) * 22,
+      vx: -Math.cos(b.a) * 20, vy: -Math.sin(b.a) * 20,
+      life: 0.8, max: 0.8, color: 'rgba(230,245,255,0.55)', size: 3, kind: 'wake',
+    });
+  }
 };
 
 // Marlin rival-crew cars: at 4-5 stars (and during the escort) they hunt the
@@ -1023,10 +1137,11 @@ World.prototype.updateServices = function (dt, audio) {
   if (!p.onFoot && p.car && this.shopT <= 0 && dist2(p.x, p.y, c.garage.x, c.garage.y) < 52 * 52) {
     const spec = VEHICLES[p.car.kind] || VEHICLES.sedan;
     const maxHp = spec.hp + (p.car.upgrades && p.car.upgrades.armor ? 50 : 0);
-    const needsFix = p.car.hp < maxHp || this.wanted > 0;
+    const needsFix = p.car.hp < maxHp || this.wanted > 0 || p.car.tiresOut;
     if (needsFix && p.cash >= 100) {
       p.cash -= 100;
       p.car.hp = maxHp;
+      p.car.tiresOut = false; // Rosa fits new rubber after a spike strip
       this.wanted = 0;
       this.cars = this.cars.filter(car => car.kind !== 'police');
       this.cops = [];

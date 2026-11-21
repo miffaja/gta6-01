@@ -26,7 +26,7 @@ export const CAR_W = 34, CAR_L = 62;
 export const CAR_ACCEL = 420, CAR_BRAKE = 620, CAR_REVERSE = 180;
 export const CAR_MAX = 520, CAR_MAX_REVERSE = 200;
 export const CAR_TURN = 2.6;
-export const TRAFFIC_COUNT = 26, PED_COUNT = 46;
+export const TRAFFIC_COUNT = 30, PED_COUNT = 60;
 export const TRAFFIC_SPEED = 120;
 // Wanted: points 0..100, stars = floor(points / 20), max 5.
 export const WANTED_MAX = 100;

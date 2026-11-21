@@ -55,6 +55,12 @@ export function stageShot(name, world) {
     world.addPed(false, roadCenterX(5) + 60, roadCenterY(3) + 80);
     world.addPed(false, roadCenterX(5) - 20, roadCenterY(3) - 90);
     world.addPed(false, roadCenterX(5) + 120, roadCenterY(3) - 40);
+    world.addPed(false, roadCenterX(4) - 60, roadCenterY(3) + 40);
+    world.addPed(false, roadCenterX(6) + 40, roadCenterY(3) - 70);
+    // A bus rolling down the avenue behind the title for extra life.
+    const bus0 = { id: 9045, x: roadCenterX(4) - 200, y: roadCenterY(3) + 12, a: 0, speed: 110, color: '#2980b9', kind: 'bus', driver: 'traffic', path: [], pathI: 0, hp: 240, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.planRoute(bus0, true);
+    world.cars.push(bus0);
     // A few traffic cars on the avenue so the street reads alive.
     for (let k = 0; k < 3; k++) {
       const tc = { id: 9040 + k, x: roadCenterX(4) + k * 260, y: roadCenterY(3) - 12, a: 0, speed: 120, color: PAL.car[k * 3 % PAL.car.length], kind: 'sedan', driver: 'traffic', path: [], pathI: 0, hp: 100, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
@@ -84,6 +90,9 @@ export function stageShot(name, world) {
     world.addPed(false, roadCenterX(4), roadCenterY(4) - 45);
     world.addPed(false, roadCenterX(5), roadCenterY(4) + 45);
     world.addPed(false, roadCenterX(6), roadCenterY(4) - 45);
+    world.addPed(false, roadCenterX(5) - 120, roadCenterY(4) + 45);
+    world.addPed(false, roadCenterX(6) + 140, roadCenterY(4) - 45);
+    world.addPed(false, roadCenterX(3) + 90, roadCenterY(4) + 45);
     for (const c of world.cars) {
       if (c !== car && c.driver === 'traffic' && Math.abs(c.y - car.y) < 60 && c.x > car.x - 100 && c.x < car.x + 1000) {
         c.x = roadCenterX(10); c.y = roadCenterY(7); world.planRoute(c, true);
@@ -95,6 +104,11 @@ export function stageShot(name, world) {
     world.planRoute(truck, true); world.cars.push(truck);
     const bus = { id: 9051, x: car.x + 560, y: car.y + 9, a: 0, speed: 120, color: '#2980b9', kind: 'bus', driver: 'traffic', path: [], pathI: 0, hp: 240, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.planRoute(bus, true); world.cars.push(bus);
+    // Oncoming lane traffic for a fuller avenue: a taxi and a van.
+    const taxi = { id: 9052, x: car.x + 760, y: car.y + 22, a: Math.PI, speed: 130, color: PAL.taxi, kind: 'taxi', driver: 'traffic', path: [], pathI: 0, hp: 110, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.planRoute(taxi, true); world.cars.push(taxi);
+    const van = { id: 9053, x: car.x - 260, y: car.y - 22, a: 0, speed: 150, color: '#ecf0f1', kind: 'van', driver: 'traffic', path: [], pathI: 0, hp: 140, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.planRoute(van, true); world.cars.push(van);
     input.keys.w = true;
     runSteps(world, 2.5, input);
     // Lookahead framing: the camera sits ahead of the car, not centred on
@@ -172,7 +186,11 @@ export function stageShot(name, world) {
     const rbX = car.x + 380;
     const rb1 = { id: 9011, x: rbX, y: roadY - 13, a: 0.55, speed: 0, color: PAL.police, kind: 'police', driver: 'police', blockade: true, path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     const rb2 = { id: 9012, x: rbX + 26, y: roadY + 13, a: -0.55, speed: 0, color: PAL.police, kind: 'police', driver: 'police', blockade: true, path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
-    world.cars.push(rb1, rb2);
+    // Third cruiser closing the far lane + a spike strip laid across the
+    // avenue just short of the roadblock (the real 3+ star mechanic).
+    const rb3 = { id: 9014, x: rbX - 30, y: roadY + 24, a: 0.15, speed: 0, color: PAL.police, kind: 'police', driver: 'police', blockade: true, path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.cars.push(rb1, rb2, rb3);
+    world.spikes.push({ x: rbX - 70, y: roadY, a: 0, life: 999 });
     const wreck = { id: 9013, x: rbX + 68, y: roadY - 36, a: 0.35, speed: 0, color: '#2b2b2e', kind: 'sedan', driver: null, burning: true, path: [], pathI: 0, hp: 0, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.cars.push(wreck);
     // Smoke column over the wreck (deterministic k-pattern like the rain
@@ -189,9 +207,16 @@ export function stageShot(name, world) {
     if (!world.heli) world.heli = { x: 0, y: 0, a: 0 };
     world.heli.x = ax - 120; world.heli.y = roadY - 305;
     world.heli.a = Math.atan2(car.y - world.heli.y, car.x - world.heli.x);
+    // Second air unit (wanted 84 >= 80 spawns it during the steps): park it
+    // upper-right so both helicopters read in the frame.
+    if (!world.heli2) world.heli2 = { x: 0, y: 0, a: 0 };
+    world.heli2.x = ax + 430; world.heli2.y = roadY - 290;
+    world.heli2.a = Math.atan2(car.y - world.heli2.y, car.x - world.heli2.x);
+    // Land the newest wanted star mid-pulse for the capture.
+    world.wantedFlash = 0.45;
     // Composition lock: drop any police the sim spawned beyond the staged
-    // three (1 chaser + 2 roadblock) so the frame reads exactly as staged.
-    const stagedIds = new Set([9003, 9010, 9011, 9012, 9013, 9020, 9021]);
+    // four (1 chaser + 3 roadblock) so the frame reads exactly as staged.
+    const stagedIds = new Set([9003, 9010, 9011, 9012, 9013, 9014, 9020, 9021]);
     world.cars = world.cars.filter(c => c.kind !== 'police' || stagedIds.has(c.id));
     // Wider framing than the driving default so the whole chase reads, and
     // centred on the neon cluster the chase was staged around. (Set after
@@ -226,6 +251,9 @@ export function stageShot(name, world) {
   world.addPed(true, city.docks.x - 240, city.docks.y - 50);
   world.addPed(true, city.docks.x - 200, city.docks.y + 60);
   world.addPed(true, city.docks.x - 260, city.docks.y - 10);
+  // Dock workers caught in the crossfire (civilians, they scatter).
+  world.addPed(false, city.docks.x - 160, city.docks.y - 90);
+  world.addPed(false, city.docks.x - 180, city.docks.y + 110);
   for (const pd of world.peds) if (pd.enemy) pd.shootT = 2.5;
   const pc = { id: 9030, x: city.docks.x - 350, y: city.docks.y - 280, a: Math.PI / 2, speed: 380, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
   world.planRoute(pc, false);
@@ -238,6 +266,10 @@ export function stageShot(name, world) {
   world.shootT = 0;
   runSteps(world, 0.1, input);
   world.textPops.push({ x: world.player.x + 30, y: world.player.y - 50, vy: -40, text: '+$1800', color: '#ffd23e', life: 1.0, max: 1.4 });
+  // The patrol boat spawns during the steps (wanted 65, player at the
+  // docks): park it mid-basin with its lightbar toward the quay.
+  if (!world.boat) world.boat = { x: 0, y: 0, a: 0, speed: 0 };
+  world.boat.x = WORLD_W + 78; world.boat.y = city.docks.y + 40; world.boat.a = -Math.PI / 2 + 0.3;
   world.cam.zoom = 0.88;
   world.setObjective();
   return { screen: 'play' };

@@ -137,15 +137,25 @@ function drawPed(ctx, x, y, a, color, enemy, walkPhase = 0) {
 // Police helicopter (world.heli, spawned at 3+ stars): ground shadow,
 // spotlight cone at dusk/night, police-livery body with tail boom, spinning
 // main + tail rotors and a blinking red beacon. ~54px long — readable from
-// screenshot distance without dominating the frame.
+// screenshot distance without dominating the frame. At 5 stars a second
+// air unit (world.heli2) flies the counter-phase orbit and draws the same.
 function drawHeli(ctx, world, night, dusk) {
-  const heli = world.heli;
+  drawHeliUnit(ctx, world, world.heli, night, dusk);
+  drawHeliUnit(ctx, world, world.heli2, night, dusk);
+}
+
+function drawHeliUnit(ctx, world, heli, night, dusk) {
   if (!heli) return;
   const p = world.player;
   const t = world.time;
+  // Rotor downwash ring on the ground: an expanding dust ellipse under the
+  // hover, phased by world.time so it pulses outward.
+  const dw = (t * 0.9) % 1;
+  ctx.strokeStyle = `rgba(196,180,150,${0.30 * (1 - dw)})`; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.ellipse(heli.x + 10, heli.y + 14, 30 + dw * 55, 14 + dw * 26, heli.a, 0, Math.PI * 2); ctx.stroke();
   // Ground shadow, offset down-sun like the building shadows.
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
-  ctx.beginPath(); ctx.ellipse(heli.x + 16, heli.y + 20, 36, 16, heli.a, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(heli.x + 16, heli.y + 20, 44, 19, heli.a, 0, Math.PI * 2); ctx.fill();
   // Spotlight: a warm cone from the heli to a lit pool on the road by the
   // player (dusk/night only — by day the beam would be invisible anyway).
   if (night || dusk) {
@@ -168,7 +178,7 @@ function drawHeli(ctx, world, night, dusk) {
     ctx.beginPath(); ctx.arc(gx, gy, 52, 0, Math.PI * 2); ctx.fill();
   }
   ctx.save();
-  ctx.translate(heli.x, heli.y); ctx.rotate(heli.a); ctx.scale(1.25, 1.25);
+  ctx.translate(heli.x, heli.y); ctx.rotate(heli.a); ctx.scale(1.45, 1.45);
   // Tail boom + fin + spinning tail rotor.
   ctx.fillStyle = '#2c3e50'; ctx.fillRect(-30, -2.5, 22, 5);
   ctx.fillStyle = '#e8edf2'; ctx.fillRect(-34, -7, 5, 14);
@@ -346,6 +356,25 @@ function drawBuilding(ctx, bd, world, night, dusk, t) {
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fillRect(rx + bd.w * 0.2, ry + bd.h * 0.25, 16, 12);
     ctx.fillRect(rx + bd.w * 0.62, ry + bd.h * 0.55, 12, 10);
+    // Rooftop variety by litSeed: vent pipes, an AC fan box, a stair hut —
+    // so no two towers read the same from the street.
+    const vs = bd.litSeed;
+    ctx.fillStyle = 'rgba(60,64,70,0.8)';
+    ctx.fillRect(rx + bd.w * (0.12 + (vs % 30) / 100), ry + bd.h * 0.6, 6, 6);
+    ctx.fillRect(rx + bd.w * (0.7 - (vs % 20) / 100), ry + bd.h * 0.18, 6, 6);
+    ctx.fillStyle = 'rgba(140,146,152,0.9)';
+    const fx = rx + bd.w * 0.42, fy = ry + bd.h * 0.38;
+    ctx.fillRect(fx - 8, fy - 8, 16, 16);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(fx, fy, 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = shade(bd.roof, 0.85);
+    ctx.fillRect(rx + bd.w * 0.08, ry + bd.h * 0.08, 14, 10);
+  } else if (bd.hgt <= 2 && bd.litSeed % 4 === 0) {
+    // Rooftop garden patch on some low-rise blocks.
+    ctx.fillStyle = 'rgba(61,122,52,0.55)';
+    ctx.fillRect(rx + bd.w * 0.3, ry + bd.h * 0.3, bd.w * 0.35, bd.h * 0.3);
+    ctx.fillStyle = 'rgba(87,160,71,0.6)';
+    ctx.beginPath(); ctx.arc(rx + bd.w * 0.42, ry + bd.h * 0.42, 7, 0, Math.PI * 2); ctx.fill();
   }
   if (bd.waterTower) {
     // Rooftop water tower: three legs, a tapered tank and an ellipse cap —
@@ -380,7 +409,12 @@ function drawBuilding(ctx, bd, world, night, dusk, t) {
       const wx = bd.x + u * bd.w + ox * v - 5, wy = by - H * v - 3;
       if (night || dusk) {
         const lit = ((bd.litSeed >> ((i * 7 + j * 13) % 24)) & 1) === 1;
-        ctx.fillStyle = lit ? 'rgba(255,205,110,0.95)' : 'rgba(30,40,60,0.85)';
+        // Lit windows vary by room: mostly warm amber, some cool white,
+        // a few TV-blue — a tower at dusk never reads as one flat colour.
+        const tone = (bd.litSeed >> ((i * 3 + j * 5 + 9) % 24)) & 3;
+        ctx.fillStyle = lit
+          ? (tone === 0 ? 'rgba(190,220,255,0.9)' : tone === 1 ? 'rgba(255,240,200,0.95)' : 'rgba(255,205,110,0.95)')
+          : 'rgba(30,40,60,0.85)';
       } else ctx.fillStyle = 'rgba(255,255,255,0.25)';
       ctx.fillRect(wx, wy, 10, 6);
     }
@@ -405,6 +439,11 @@ function drawBuilding(ctx, bd, world, night, dusk, t) {
   if ((night || dusk) && bd.neon) {
     const pulse = 0.8 + 0.2 * Math.sin(world.time * 2.5 + bd.litSeed);
     const nx = bd.x + bd.w / 2 + ox * 0.8, ny = by - H * 0.8 + 7;
+    // Soft halo bleeding off the sign onto the wall around it.
+    const hg = ctx.createRadialGradient(nx, ny - 6, 4, nx, ny - 6, 62);
+    hg.addColorStop(0, hexA(bd.neonColor, 0.30 * pulse)); hg.addColorStop(1, hexA(bd.neonColor, 0));
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.arc(nx, ny - 6, 62, 0, Math.PI * 2); ctx.fill();
     ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
     ctx.shadowColor = bd.neonColor; ctx.shadowBlur = 26;
     ctx.fillStyle = bd.neonColor;
@@ -414,6 +453,18 @@ function drawBuilding(ctx, bd, world, night, dusk, t) {
     ctx.fillStyle = '#ffffff';
     ctx.globalAlpha = pulse; ctx.fillText(bd.neonText, nx, ny);
     ctx.globalAlpha = 1;
+    // Some towers also carry a vertical blade sign down the east edge.
+    if (bd.litSeed % 3 === 0) {
+      ctx.save();
+      ctx.translate(bd.x + bd.w - 6 + ox * 0.5, by - H * 0.45);
+      ctx.rotate(Math.PI / 2);
+      ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+      ctx.shadowColor = bd.neonColor; ctx.shadowBlur = 16;
+      ctx.fillStyle = bd.neonColor; ctx.globalAlpha = 0.9 * pulse;
+      ctx.fillText(bd.neonText, 0, 0);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    }
   }
 }
 
@@ -528,9 +579,17 @@ function drawWorld(ctx, world) {
   // every intersection, and neon signs bleeding colour onto the nearest road.
   if ((night || dusk) && world.rain) {
     for (const cx of city.roads.v) for (const cy of city.roads.h) {
-      const g = ctx.createLinearGradient(cx, cy, cx, cy + 60);
-      g.addColorStop(0, 'rgba(255,214,130,0.22)'); g.addColorStop(1, 'rgba(255,214,130,0)');
-      ctx.fillStyle = g; ctx.fillRect(cx - 3, cy, 6, 60);
+      const g = ctx.createLinearGradient(cx, cy, cx, cy + 95);
+      g.addColorStop(0, 'rgba(255,214,130,0.30)'); g.addColorStop(1, 'rgba(255,214,130,0)');
+      ctx.fillStyle = g; ctx.fillRect(cx - 3, cy, 6, 95);
+    }
+    // Headlight smears: every car's lights streak down the wet asphalt.
+    for (const c of world.cars) {
+      if (c.hp <= 0) continue;
+      const hx = c.x + Math.cos(c.a) * 30, hy = c.y + Math.sin(c.a) * 30;
+      const g = ctx.createLinearGradient(hx, hy, hx, hy + 70);
+      g.addColorStop(0, 'rgba(255,240,180,0.18)'); g.addColorStop(1, 'rgba(255,240,180,0)');
+      ctx.fillStyle = g; ctx.fillRect(hx - 7, hy, 14, 70);
     }
   }
   if (night || dusk) {
@@ -598,6 +657,17 @@ function drawWorld(ctx, world) {
   ctx.fillRect(WORLD_W - 12, 840, 8, 360);
   // Port containers + pier + marina + lighthouse + boats + palms + beach gear.
   for (const cn of city.containers) { ctx.fillStyle = cn.color; ctx.fillRect(cn.x, cn.y, cn.w, cn.h); ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(cn.x, cn.y, cn.w, 8); ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.strokeRect(cn.x, cn.y, cn.w, cn.h); }
+  // Double-stacked containers on the quay by the harbor basin: a second box
+  // sits on top of each, slightly inset, with corrugation lines down the side.
+  if (city.containerStacks) for (const cn of city.containerStacks) {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(cn.x + 3, cn.y + 4, cn.w, cn.h);
+    ctx.fillStyle = cn.color; ctx.fillRect(cn.x, cn.y, cn.w, cn.h);
+    ctx.fillStyle = cn.top; ctx.fillRect(cn.x + 3, cn.y - 7, cn.w - 6, cn.h - 10);
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1;
+    ctx.strokeRect(cn.x, cn.y, cn.w, cn.h); ctx.strokeRect(cn.x + 3, cn.y - 7, cn.w - 6, cn.h - 10);
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    for (let ry = cn.y + 8; ry < cn.y + cn.h; ry += 8) { ctx.beginPath(); ctx.moveTo(cn.x, ry); ctx.lineTo(cn.x + cn.w, ry); ctx.stroke(); }
+  }
   ctx.fillStyle = '#8a6f4d'; ctx.fillRect(city.pier.x - 30, WORLD_H + BEACH_H - 120, 60, 120);
   ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1;
   for (let py = WORLD_H + BEACH_H - 112; py < WORLD_H + BEACH_H - 4; py += 12) { ctx.beginPath(); ctx.moveTo(city.pier.x - 30, py); ctx.lineTo(city.pier.x + 30, py); ctx.stroke(); }
@@ -612,6 +682,31 @@ function drawWorld(ctx, world) {
       ctx.fillStyle = '#fff'; ctx.fillRect(-4, -4, 8, 8);
       ctx.restore();
     }
+  }
+  // Police patrol boat working the harbor basin (world.boat): white hull,
+  // blue stripe, cabin and a strobing lightbar, bow wave at the prow.
+  if (world.boat) {
+    const b = world.boat;
+    ctx.save(); ctx.translate(b.x, b.y);
+    ctx.translate(0, Math.sin(world.time * 1.1) * 2); // gentle bob
+    ctx.rotate(b.a);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.moveTo(26, -5); ctx.lineTo(40, 0); ctx.lineTo(26, 5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e8edf2';
+    ctx.beginPath(); ctx.moveTo(-22, -8); ctx.lineTo(18, -8); ctx.lineTo(28, 0); ctx.lineTo(18, 8); ctx.lineTo(-22, 8); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,28,38,0.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-22, -8); ctx.lineTo(18, -8); ctx.lineTo(28, 0); ctx.lineTo(18, 8); ctx.lineTo(-22, 8); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = '#2d7bff'; ctx.fillRect(-20, -2, 36, 4);
+    ctx.fillStyle = '#1c2733'; ctx.fillRect(-6, -6, 14, 12);
+    ctx.fillStyle = 'rgba(140,190,230,0.85)'; ctx.fillRect(2, -5, 5, 10);
+    const on = Math.floor(world.time * 6) % 2 === 0;
+    ctx.fillStyle = on ? '#ff2d2d' : '#7a1f1f'; ctx.fillRect(-4, -4, 4, 4);
+    ctx.fillStyle = on ? '#1f3f7a' : '#2d7bff'; ctx.fillRect(-4, 0, 4, 4);
+    if (night || dusk) {
+      ctx.fillStyle = on ? 'rgba(255,45,45,0.12)' : 'rgba(45,123,255,0.12)';
+      ctx.beginPath(); ctx.arc(0, 0, 70, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
   }
   if (city.lighthouse) {
     const lh = city.lighthouse;
@@ -672,6 +767,32 @@ function drawWorld(ctx, world) {
     ctx.beginPath(); ctx.moveTo(s.x - Math.cos(s.a) * 20, s.y - Math.sin(s.a) * 20); ctx.lineTo(s.x + Math.cos(s.a) * 20, s.y + Math.sin(s.a) * 20); ctx.stroke();
   }
   ctx.globalAlpha = 1;
+  // Spike strips: a dark band across the road with metal teeth and warning
+  // stripes at the ends — visible enough to dodge if you're watching.
+  for (const s of world.spikes) {
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.a);
+    ctx.fillStyle = '#22252b'; ctx.fillRect(-30, -5, 60, 10);
+    ctx.fillStyle = '#f1c40f';
+    ctx.fillRect(-30, -5, 6, 10); ctx.fillRect(24, -5, 6, 10);
+    ctx.fillStyle = '#d7dde6';
+    for (let sx = -24; sx <= 24; sx += 6) {
+      ctx.beginPath(); ctx.moveTo(sx - 2, 3); ctx.lineTo(sx + 2, 3); ctx.lineTo(sx, -4); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+  // Flat sidewalk props: traffic cones + planters (the tall props — crates,
+  // barrels, dumpsters — draw in the depth-sorted pass below).
+  if (city.props) for (const pr of city.props) {
+    if (pr.kind === 3) {
+      ctx.fillStyle = '#e67e22';
+      ctx.beginPath(); ctx.moveTo(pr.x - 5, pr.y + 5); ctx.lineTo(pr.x + 5, pr.y + 5); ctx.lineTo(pr.x, pr.y - 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(pr.x - 3, pr.y, 6, 2.5);
+    } else if (pr.kind === 4) {
+      ctx.fillStyle = '#8a5a3b'; ctx.fillRect(pr.x - 11, pr.y - 5, 22, 10);
+      ctx.fillStyle = '#3d7a34'; ctx.beginPath(); ctx.arc(pr.x - 5, pr.y - 4, 6, 0, Math.PI * 2); ctx.arc(pr.x + 5, pr.y - 4, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#e91e63'; ctx.beginPath(); ctx.arc(pr.x, pr.y - 6, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // Mission / job marker (pulsing ring + beacon).
   const marker = world.marker || (world.job ? (world.job.stage === 0 ? world.job.from : world.job.to) : null);
   if (marker && world.screen === 'play') {
@@ -754,6 +875,51 @@ function drawWorld(ctx, world) {
       ctx.fillStyle = '#3a4149'; ctx.fillRect(bs.x - 14, bs.y - 12, 3, 20);          // pole
       ctx.fillStyle = '#8a6f4d'; ctx.fillRect(bs.x - 12, bs.y + 2, 14, 5);           // bench
       ctx.fillStyle = '#f1c40f'; ctx.fillRect(bs.x - 2, bs.y - 17, 4, 4);            // route sign
+    } });
+  // Tall sidewalk props: crate stacks, barrel clusters, dumpsters.
+  if (city.props) for (const pr of city.props) {
+    if (pr.kind === 0) ents.push({ y: pr.y + 10, fn: () => {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(pr.x - 11, pr.y - 4, 26, 16);
+      ctx.fillStyle = '#a67c52'; ctx.fillRect(pr.x - 12, pr.y - 6, 14, 14); ctx.fillRect(pr.x + 1, pr.y - 4, 12, 12);
+      ctx.fillStyle = '#8a5a3b'; ctx.fillRect(pr.x - 8, pr.y - 15, 11, 11);
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1;
+      ctx.strokeRect(pr.x - 12, pr.y - 6, 14, 14); ctx.strokeRect(pr.x + 1, pr.y - 4, 12, 12); ctx.strokeRect(pr.x - 8, pr.y - 15, 11, 11);
+    } });
+    else if (pr.kind === 1) ents.push({ y: pr.y + 8, fn: () => {
+      for (const [bx, by, bc] of [[-7, 0, '#7f8c8d'], [4, -3, '#2980b9'], [-2, 6, '#c0392b']]) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(pr.x + bx + 2, pr.y + by + 3, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = bc; ctx.beginPath(); ctx.arc(pr.x + bx, pr.y + by, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(pr.x + bx, pr.y + by, 3.5, 0, Math.PI * 2); ctx.stroke();
+      }
+    } });
+    else if (pr.kind === 2) ents.push({ y: pr.y + 12, fn: () => {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(pr.x - 12, pr.y - 2, 38, 18);
+      ctx.fillStyle = '#2e5e4e'; ctx.fillRect(pr.x - 14, pr.y - 6, 36, 16);
+      ctx.fillStyle = '#24483d'; ctx.fillRect(pr.x - 14, pr.y - 11, 36, 6);
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(pr.x - 10, pr.y - 3, 8, 3);
+    } });
+  }
+  // Harbor gantry cranes: two legs, a long boom over the basin and a
+  // container hanging from the trolley cable (it sways a touch).
+  if (city.cranes) for (const cr of city.cranes)
+    ents.push({ y: cr.y + cr.h / 2, fn: () => {
+      const sway = Math.sin(world.time * 0.7 + cr.y) * 4;
+      ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cr.x - 16, cr.y - cr.h / 2); ctx.lineTo(cr.x - 16, cr.y + cr.h / 2);
+      ctx.moveTo(cr.x + 16, cr.y - cr.h / 2); ctx.lineTo(cr.x + 16, cr.y + cr.h / 2);
+      ctx.stroke();
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(cr.x - 30, cr.y - cr.h / 2); ctx.lineTo(cr.x + 110, cr.y - cr.h / 2);
+      ctx.moveTo(cr.x - 16, cr.y - cr.h / 2 + 26); ctx.lineTo(cr.x + 16, cr.y - cr.h / 2 + 26);
+      ctx.moveTo(cr.x - 16, cr.y + cr.h / 2 - 26); ctx.lineTo(cr.x + 16, cr.y + cr.h / 2 - 26);
+      ctx.stroke();
+      ctx.fillStyle = '#d35400'; ctx.fillRect(cr.x + 52 + sway, cr.y - cr.h / 2 - 4, 16, 8); // trolley
+      ctx.strokeStyle = 'rgba(30,30,30,0.7)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(cr.x + 60 + sway, cr.y - cr.h / 2 + 4); ctx.lineTo(cr.x + 60 + sway, cr.y - cr.h / 2 + 34); ctx.stroke();
+      ctx.fillStyle = '#2980b9'; ctx.fillRect(cr.x + 46 + sway, cr.y - cr.h / 2 + 34, 28, 16); // hanging container
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.strokeRect(cr.x + 46 + sway, cr.y - cr.h / 2 + 34, 28, 16);
     } });
   // Cars (traffic + police + rivals + player). Airborne stunt cars draw
   // bigger with a separated shadow.
@@ -840,6 +1006,17 @@ function drawWorld(ctx, world) {
   // The police helicopter flies over everything, so it draws after the
   // depth-sorted pass (its spotlight cone lands on the road below).
   drawHeli(ctx, world, night, dusk);
+  // Gulls over the harbor + beach: white chevrons flapping on fixed orbits,
+  // each with a soft shadow on the water/sand below.
+  if (world.gulls) for (const g of world.gulls) {
+    const ga = world.time * g.sp + g.ph;
+    const gx = g.cx + Math.cos(ga) * g.r, gy = g.cy + Math.sin(ga) * g.r * 0.6;
+    const flap = Math.sin(world.time * 7 + g.ph * 3) * 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(gx - 7, gy + 16 + flap * 0.4); ctx.lineTo(gx, gy + 13); ctx.lineTo(gx + 7, gy + 16 + flap * 0.4); ctx.stroke();
+    ctx.strokeStyle = 'rgba(250,250,248,0.95)'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(gx - 8, gy + flap); ctx.lineTo(gx, gy - 2); ctx.lineTo(gx + 8, gy + flap); ctx.stroke();
+  }
   // Particles.
   for (const pt of world.particles) {
     ctx.globalAlpha = clamp(pt.life / pt.max, 0, 1);
@@ -868,6 +1045,20 @@ function drawLighting(ctx, world, w, h) {
   else if (t >= 5.5 && t < 7.5) tint = 'rgba(255,150,110,0.10)';
   if (world.rain) tint = (t >= 19.5 || t < 5.5) ? 'rgba(16,26,48,0.38)' : 'rgba(30,45,70,0.20)';
   if (tint && world.screen !== 'title') { ctx.fillStyle = tint; ctx.fillRect(0, 0, w, h); }
+  // Police proximity: when a cruiser is close, the screen edges breathe
+  // red/blue in time with the lightbars — pressure you can feel.
+  if (world.screen === 'play' && world.wanted > 0) {
+    let nearest = Infinity;
+    for (const c of world.cars) if (c.kind === 'police') nearest = Math.min(nearest, dist(c.x, c.y, world.player.x, world.player.y));
+    if (nearest < 520) {
+      const k = (1 - nearest / 520) * 0.16;
+      const red = Math.floor(world.time * 6) % 2 === 0;
+      const col = red ? `rgba(255,45,45,${k})` : `rgba(45,123,255,${k})`;
+      const eg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.72);
+      eg.addColorStop(0, 'rgba(0,0,0,0)'); eg.addColorStop(1, col);
+      ctx.fillStyle = eg; ctx.fillRect(0, 0, w, h);
+    }
+  }
   // Golden-hour sun glow from the west edge.
   if (t >= 17.5 && t < 19.5 && world.screen !== 'title') {
     const g = ctx.createLinearGradient(0, 0, w * 0.5, 0);
@@ -920,6 +1111,13 @@ function drawHUD(ctx, world, w, h) {
     ctx.fillText(`${kmh}`, 196, 99); ctx.textAlign = 'left';
     ctx.font = '10px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.fillText('km/h', 182, 112);
+    if (p.car.tiresOut) {
+      // Shredded-tire warning under the speedo, blinking amber.
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(world.time * 6);
+      ctx.fillStyle = '#f39c12'; ctx.font = 'bold 11px sans-serif';
+      ctx.fillText('⚠ TIRES OUT', 120, 112);
+      ctx.globalAlpha = 1;
+    }
   }
   // Top-right: wanted stars + clock.
   const stars = world.stars();
@@ -996,15 +1194,32 @@ function drawMinimap(ctx, world, w, h) {
   ctx.save();
   ctx.beginPath(); rr(ctx, mx, my, mw, mh, 6); ctx.clip();
   ctx.fillStyle = '#3d6b34'; ctx.fillRect(mx, my, mw, mh);
+  // District tints: downtown reads lighter, parks stay green squares,
+  // parking lots grey out, and the harbor basin shows as a blue notch
+  // on the east edge.
+  ctx.fillStyle = 'rgba(200,190,160,0.35)';
+  ctx.fillRect(mx + WORLD_W * 0.25 * s, my + WORLD_H * 0.3 * s, WORLD_W * 0.5 * s, WORLD_H * 0.4 * s);
+  for (const b of world.city.blocks) {
+    if (b.kind === 1) { ctx.fillStyle = '#57a047'; ctx.fillRect(mx + b.x * s, my + b.y * s, b.w * s, b.h * s); }
+    else if (b.kind === 2) { ctx.fillStyle = '#6b7078'; ctx.fillRect(mx + b.x * s, my + b.y * s, b.w * s, b.h * s); }
+  }
   ctx.fillStyle = '#2e7fa8'; ctx.fillRect(mx, my + WORLD_H * s, mw, BEACH_H * s);
+  ctx.fillRect(mx + (WORLD_W - 6) * s, my + 840 * s, 186 * s, 360 * s);
   ctx.strokeStyle = '#8a8f96'; ctx.lineWidth = 2;
   for (const cx of world.city.roads.v) { ctx.beginPath(); ctx.moveTo(mx + cx * s, my); ctx.lineTo(mx + cx * s, my + WORLD_H * s); ctx.stroke(); }
   for (const cy of world.city.roads.h) { ctx.beginPath(); ctx.moveTo(mx, my + cy * s); ctx.lineTo(mx + WORLD_W * s, my + cy * s); ctx.stroke(); }
   const dot = (x, y, color, r = 3) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(mx + x * s, my + y * s, r, 0, Math.PI * 2); ctx.fill(); };
-  // Landmark blips: garage (wrench orange), safehouse (green), hospital (white).
+  // Landmark blips: garage (wrench orange), safehouse (green), hospital
+  // (white), precinct (blue), docks (amber).
   dot(world.city.garage.x, world.city.garage.y, '#e67e22', 3.5);
   dot(world.city.safehouse.x, world.city.safehouse.y, '#2ecc71', 3.5);
   dot(world.city.hospital.x, world.city.hospital.y, '#ffffff', 3);
+  dot(world.city.precinct.x, world.city.precinct.y, '#5aa9ff', 3);
+  dot(world.city.docks.x, world.city.docks.y, '#f39c12', 3);
+  // Air units + patrol boat show as pale blips so the heat reads on the map.
+  if (world.heli) dot(world.heli.x, world.heli.y, '#ffffff', 3.5);
+  if (world.heli2) dot(world.heli2.x, world.heli2.y, '#ffffff', 3.5);
+  if (world.boat) dot(world.boat.x, world.boat.y, '#9fd8ff', 3);
   // Postcard blips only show when one is close — a hint, not a map reveal.
   for (const pc of world.postcards) {
     if (pc.found) continue;

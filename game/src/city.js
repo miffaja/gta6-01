@@ -150,10 +150,54 @@ export function buildCity(seed) {
     if ((i * 3 + j) % 6 !== 0) continue; // ~19 shelters city-wide
     busStops.push({ x: roads.v[i] + STREET / 2 + 8, y: roads.h[j] + PITCH / 2 });
   }
+  // Sidewalk street props for a denser street read: crate stacks, barrel
+  // clusters, dumpsters, traffic cones and planters. Kind and spot come from
+  // the block's first building litSeed (or its grid position when it has no
+  // buildings), so placement is deterministic and the seeded layout above is
+  // untouched. Kinds: 0 crates, 1 barrels, 2 dumpster, 3 cones, 4 planter.
+  // Pure decoration — render.js draws them, nothing collides with them.
+  const props = [];
+  for (const b of blocks) {
+    const seed0 = b.buildings.length ? b.buildings[0].litSeed : (b.c * 31 + b.r * 17);
+    const roll = seed0 % 10;
+    if (roll <= 2) {
+      // Crate stack tucked by the south-east corner of the block.
+      props.push({ kind: 0, x: b.x + BLOCK - 28 - (seed0 % 26), y: b.y + BLOCK - 18 });
+    } else if (roll <= 4) {
+      props.push({ kind: 1, x: b.x + 18 + (seed0 % 28), y: b.y + BLOCK - 16 });
+    } else if (roll === 5) {
+      props.push({ kind: 2, x: b.x + BLOCK - 46, y: b.y + 12 + (seed0 % 56) });
+    } else if (roll === 6 && b.kind === 2) {
+      // A pair of cones guarding a parking-lot entrance.
+      props.push({ kind: 3, x: b.x + BLOCK / 2 - 22, y: b.y + BLOCK - 10 });
+      props.push({ kind: 3, x: b.x + BLOCK / 2 + 10, y: b.y + BLOCK - 10 });
+    } else if (roll === 7) {
+      props.push({ kind: 4, x: b.x + 22 + (seed0 % 88), y: b.y - 12 });
+      props.push({ kind: 4, x: b.x + 62 + (seed0 % 88), y: b.y - 12 });
+    }
+  }
+  // Harbor gantry cranes + double-stacked containers at Solmar Docks, so the
+  // east edge reads as a working port from the avenue. Fixed spots by the
+  // harbor basin (render.js draws the basin at the east edge, y 840..1200);
+  // the hanging container sways in the render pass.
+  const cranes = [
+    { x: WORLD_W - 34, y: 905, h: 150 },
+    { x: WORLD_W - 34, y: 1125, h: 150 },
+  ];
+  const STACK_COLORS = ['#c0392b', '#2980b9', '#f39c12', '#27ae60', '#8e44ad', '#16a085'];
+  const STACK_TOPS = ['#e67e22', '#9b59b6', '#1abc9c', '#e74c3c', '#3498db', '#f1c40f'];
+  const containerStacks = [];
+  for (let k = 0; k < 6; k++) {
+    containerStacks.push({
+      x: WORLD_W - 74 - (k % 2) * 26, y: 860 + k * 52, w: 22, h: 44,
+      color: STACK_COLORS[k % STACK_COLORS.length],
+      top: STACK_TOPS[k % STACK_TOPS.length],
+    });
+  }
   return {
     seed, roads, nodes, nodeAt, blocks, garage, safehouse, docks, hospital, precinct, pier,
     containers, palms, umbrellas, lifeguards, marina, lighthouse, boats, ramps,
-    billboards, busStops,
+    billboards, busStops, props, cranes, containerStacks,
     beach: { y0: WORLD_H, y1: WORLD_H + BEACH_H },
     // Spawn ON the road south of the garage intersection (never inside a block).
     spawn: { x: garage.x, y: garage.y + 70 },
