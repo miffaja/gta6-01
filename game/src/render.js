@@ -134,6 +134,82 @@ function drawPed(ctx, x, y, a, color, enemy, walkPhase = 0) {
   ctx.restore();
 }
 
+// Police helicopter (world.heli, spawned at 3+ stars): ground shadow,
+// spotlight cone at dusk/night, police-livery body with tail boom, spinning
+// main + tail rotors and a blinking red beacon. ~54px long — readable from
+// screenshot distance without dominating the frame.
+function drawHeli(ctx, world, night, dusk) {
+  const heli = world.heli;
+  if (!heli) return;
+  const p = world.player;
+  const t = world.time;
+  // Ground shadow, offset down-sun like the building shadows.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(heli.x + 16, heli.y + 20, 36, 16, heli.a, 0, Math.PI * 2); ctx.fill();
+  // Spotlight: a warm cone from the heli to a lit pool on the road by the
+  // player (dusk/night only — by day the beam would be invisible anyway).
+  if (night || dusk) {
+    const gx = p.x + 30, gy = p.y + 10;
+    const dx = gx - heli.x, dy = gy - heli.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len, spread = 46;
+    const g = ctx.createLinearGradient(heli.x, heli.y, gx, gy);
+    g.addColorStop(0, 'rgba(255,240,180,0.38)');
+    g.addColorStop(1, 'rgba(255,240,180,0.08)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(heli.x, heli.y);
+    ctx.lineTo(gx + nx * spread, gy + ny * spread);
+    ctx.lineTo(gx - nx * spread, gy - ny * spread);
+    ctx.closePath(); ctx.fill();
+    const pg = ctx.createRadialGradient(gx, gy, 0, gx, gy, 52);
+    pg.addColorStop(0, 'rgba(255,240,180,0.26)'); pg.addColorStop(1, 'rgba(255,240,180,0)');
+    ctx.fillStyle = pg;
+    ctx.beginPath(); ctx.arc(gx, gy, 52, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.save();
+  ctx.translate(heli.x, heli.y); ctx.rotate(heli.a); ctx.scale(1.25, 1.25);
+  // Tail boom + fin + spinning tail rotor.
+  ctx.fillStyle = '#2c3e50'; ctx.fillRect(-30, -2.5, 22, 5);
+  ctx.fillStyle = '#e8edf2'; ctx.fillRect(-34, -7, 5, 14);
+  const tr = t * 40;
+  ctx.strokeStyle = 'rgba(20,24,30,0.7)'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-32 + Math.cos(tr) * 7, Math.sin(tr) * 7);
+  ctx.lineTo(-32 - Math.cos(tr) * 7, -Math.sin(tr) * 7);
+  ctx.stroke();
+  // Body: police livery — white top, dark belly, blue stripe, glass cockpit.
+  ctx.fillStyle = '#e8edf2';
+  ctx.beginPath(); ctx.ellipse(2, 0, 17, 10, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(20,28,38,0.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(2, 0, 17, 10, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#1c2733';
+  ctx.beginPath(); ctx.ellipse(2, 3.5, 16, 6.5, 0, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = '#2d7bff'; ctx.fillRect(-13, -1.5, 28, 3);
+  ctx.fillStyle = 'rgba(140,190,230,0.85)';
+  ctx.beginPath(); ctx.ellipse(11, 0, 6, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+  // Skids.
+  ctx.strokeStyle = '#14181e'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-8, -9); ctx.lineTo(10, -9); ctx.moveTo(-8, 9); ctx.lineTo(10, 9); ctx.stroke();
+  // Main rotor: faint disc + two spinning blade pairs.
+  ctx.fillStyle = 'rgba(30,34,40,0.10)';
+  ctx.beginPath(); ctx.arc(0, 0, 27, 0, Math.PI * 2); ctx.fill();
+  const ra = t * 28;
+  ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(ra) * 27, Math.sin(ra) * 27);
+  ctx.lineTo(-Math.cos(ra) * 27, -Math.sin(ra) * 27);
+  ctx.moveTo(Math.cos(ra + Math.PI / 2) * 27, Math.sin(ra + Math.PI / 2) * 27);
+  ctx.lineTo(-Math.cos(ra + Math.PI / 2) * 27, -Math.sin(ra + Math.PI / 2) * 27);
+  ctx.stroke();
+  ctx.fillStyle = '#14181e'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
+  // Blinking red beacon on the tail.
+  ctx.globalAlpha = Math.sin(t * 6) > 0 ? 1 : 0.15;
+  ctx.fillStyle = '#ff2d2d'; ctx.beginPath(); ctx.arc(-31, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 // Skyline landmarks, picked once per city (render-only flags on the chosen
 // buildings; deterministic from the seeded layout, no gameplay effect):
 //  - helipad on the flagship tower: an hgt-5 building nearest the map
@@ -302,7 +378,7 @@ function drawBuilding(ctx, bd, world, night, dusk, t) {
     for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
       const u = (i + 0.5) / cols, v = (j + 0.5) / rows;
       const wx = bd.x + u * bd.w + ox * v - 5, wy = by - H * v - 3;
-      if (night) {
+      if (night || dusk) {
         const lit = ((bd.litSeed >> ((i * 7 + j * 13) % 24)) & 1) === 1;
         ctx.fillStyle = lit ? 'rgba(255,205,110,0.95)' : 'rgba(30,40,60,0.85)';
       } else ctx.fillStyle = 'rgba(255,255,255,0.25)';
@@ -450,14 +526,14 @@ function drawWorld(ctx, world) {
   }
   // Wet-night reflections: streetlight streaks smeared down the asphalt at
   // every intersection, and neon signs bleeding colour onto the nearest road.
-  if (night && world.rain) {
+  if ((night || dusk) && world.rain) {
     for (const cx of city.roads.v) for (const cy of city.roads.h) {
       const g = ctx.createLinearGradient(cx, cy, cx, cy + 60);
       g.addColorStop(0, 'rgba(255,214,130,0.22)'); g.addColorStop(1, 'rgba(255,214,130,0)');
       ctx.fillStyle = g; ctx.fillRect(cx - 3, cy, 6, 60);
     }
   }
-  if (night) {
+  if (night || dusk) {
     for (const b of city.blocks) for (const bd of b.buildings) {
       if (!bd.neon) continue;
       const bcx = bd.x + bd.w / 2, bcy = bd.y + bd.h / 2;
@@ -503,6 +579,23 @@ function drawWorld(ctx, world) {
       ctx.fillStyle = '#ffe6a8'; ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
     }
   }
+  // Harbor basin at the docks: a small inlet of bay water east of the road
+  // end, so Solmar Docks reads as a working port (a boat bobs here too —
+  // the mission staging moors one in frame). Drawn after the roads so the
+  // avenue ends at the quay; containers below sit on the quay edge.
+  ctx.fillStyle = PAL.waterDeep;
+  ctx.fillRect(WORLD_W - 6, 840, 186, 360);
+  ctx.fillStyle = PAL.water;
+  ctx.fillRect(WORLD_W - 6, 840, 186, 300);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let wy = 866; wy < 1180; wy += 34) {
+    const wx = WORLD_W + 14 + Math.sin(wy * 0.06 + world.time * 1.3) * 4;
+    ctx.moveTo(wx, wy); ctx.lineTo(wx + 26, wy);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#8a6f4d'; // quay edge
+  ctx.fillRect(WORLD_W - 12, 840, 8, 360);
   // Port containers + pier + marina + lighthouse + boats + palms + beach gear.
   for (const cn of city.containers) { ctx.fillStyle = cn.color; ctx.fillRect(cn.x, cn.y, cn.w, cn.h); ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(cn.x, cn.y, cn.w, 8); ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.strokeRect(cn.x, cn.y, cn.w, cn.h); }
   ctx.fillStyle = '#8a6f4d'; ctx.fillRect(city.pier.x - 30, WORLD_H + BEACH_H - 120, 60, 120);
@@ -615,9 +708,9 @@ function drawWorld(ctx, world) {
     ctx.fillRect(-7, -3 + bob, 8, 1.5); ctx.fillRect(-7, 0 + bob, 8, 1.5); ctx.fillRect(-7, 3 + bob, 5, 1.5);
     ctx.restore();
   }
-  // Headlight pools on the asphalt at night: a flattened oval of light just
-  // ahead of each car, under the cones drawn with the cars themselves.
-  if (night) {
+  // Headlight pools on the asphalt at dusk/night: a flattened oval of light
+  // just ahead of each car, under the cones drawn with the cars themselves.
+  if (night || dusk) {
     let pools = 0;
     for (const c of world.cars) {
       if (pools >= 20) break;
@@ -672,10 +765,21 @@ function drawWorld(ctx, world) {
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         ctx.beginPath(); ctx.ellipse(c.x + 14, c.y + 18, 30, 16, c.a, 0, Math.PI * 2); ctx.fill();
         ctx.translate(c.x, c.y); ctx.scale(1.18, 1.18); ctx.translate(-c.x, -c.y);
-        drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
+        drawCar(ctx, c.x, c.y, c.a, c.burning ? '#33302e' : c.color, c.kind, night || dusk, braking, world.time, c.speed * world.time * 0.12);
         ctx.restore();
       } else {
-        drawCar(ctx, c.x, c.y, c.a, c.color, c.kind, night, braking, world.time, c.speed * world.time * 0.12);
+        drawCar(ctx, c.x, c.y, c.a, c.burning ? '#33302e' : c.color, c.kind, night || dusk, braking, world.time, c.speed * world.time * 0.12);
+      }
+      // Burning wreck: charred body (above) + two flickering flame tongues,
+      // phased by world.time so they dance frame to frame.
+      if (c.burning) {
+        const fl = 0.75 + 0.25 * Math.sin(world.time * 11 + c.x * 0.05);
+        ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.a);
+        ctx.fillStyle = 'rgba(255,139,55,0.85)'; // flame core #FF8B37
+        ctx.beginPath(); ctx.ellipse(0, 0, 24 * fl, 13 * fl, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,226,160,0.9)'; // hot centre #FFE2A0
+        ctx.beginPath(); ctx.ellipse(2, 0, 13 * fl, 7 * fl, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
       }
       // Player car gets a subtle outline so it reads in traffic.
       if (!p.onFoot && p.car === c) {
@@ -733,6 +837,9 @@ function drawWorld(ctx, world) {
     } });
   ents.sort((a, b) => a.y - b.y);
   for (const e of ents) e.fn();
+  // The police helicopter flies over everything, so it draws after the
+  // depth-sorted pass (its spotlight cone lands on the road below).
+  drawHeli(ctx, world, night, dusk);
   // Particles.
   for (const pt of world.particles) {
     ctx.globalAlpha = clamp(pt.life / pt.max, 0, 1);

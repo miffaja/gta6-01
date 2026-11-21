@@ -6,7 +6,7 @@
 // Exports: stageShot(name, world).
 // Dependencies: city.js (roadCenterX/Y), config.js (PAL); driven by main.js.
 import { roadCenterX, roadCenterY } from './city.js';
-import { PAL } from './config.js';
+import { PAL, WORLD_W } from './config.js';
 
 const STEP = 1 / 30;
 
@@ -103,10 +103,12 @@ export function stageShot(name, world) {
     return { screen: 'play' };
   }
   if (name === 'wanted') {
-    // Night pursuit: 4 stars, three police cars with strobing lightbars,
-    // headlight pools on wet asphalt, neon signs downtown, and two Marlin
-    // rival cars joining the chase from both sides.
-    world.timeH = 21.5;
+    // Dusk pursuit: 4 stars in the rain, a police chaser + two Marlin rival
+    // cars behind, a diagonal roadblock and a burning wreck ahead, and the
+    // police helicopter overhead with its spotlight on the road. Staged at
+    // 19.2 (deep dusk) so it shares the golden-hour family look of the
+    // other shots while the neons, lit windows and headlights all read.
+    world.timeH = 19.2;
     world.rain = 1;
     // Stage the chase on the avenue nearest the densest neon cluster so the
     // signs actually read in the frame: anchor on the neon tower with the
@@ -138,11 +140,11 @@ export function stageShot(name, world) {
         c.x = roadCenterX(1); c.y = roadCenterY(1); world.planRoute(c, true);
       }
     }
-    for (let k = 0; k < 3; k++) {
-      const pc = { id: 9010 + k, x: car.x - 320 - k * 160, y: car.y + (k % 2 ? 40 : -40), a: 0, speed: 380, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
-      world.planRoute(pc, false);
-      world.cars.push(pc);
-    }
+    // One chaser cruiser behind (the other two police cars form the
+    // roadblock staged after the steps, below).
+    const chaser = { id: 9010, x: car.x - 320, y: car.y - 40, a: 0, speed: 380, color: PAL.police, kind: 'police', driver: 'police', path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.planRoute(chaser, false);
+    world.cars.push(chaser);
     const rival = { id: 9020, x: car.x - 520, y: car.y + 90, a: 0, speed: 400, color: '#7d3c98', kind: 'rival', driver: 'rival', path: [], pathI: 0, hp: 130, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
     world.planRoute(rival, false);
     world.cars.push(rival);
@@ -163,6 +165,34 @@ export function stageShot(name, world) {
     // Land the police lightbars on their red-on phase for the capture
     // (drawCar strobes on floor(time*6) parity).
     if (Math.floor(world.time * 6) % 2 !== 0) world.time += 1 / 6;
+    // Roadblock + burning wreck, staged ~380px ahead of the player's final
+    // position (after the steps, so the chase never reaches them): two
+    // cruisers angled across the avenue in a diagonal, a wreck burning
+    // beside them. `blockade` cars hold position in updatePolice.
+    const rbX = car.x + 380;
+    const rb1 = { id: 9011, x: rbX, y: roadY - 13, a: 0.55, speed: 0, color: PAL.police, kind: 'police', driver: 'police', blockade: true, path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    const rb2 = { id: 9012, x: rbX + 26, y: roadY + 13, a: -0.55, speed: 0, color: PAL.police, kind: 'police', driver: 'police', blockade: true, path: [], pathI: 0, hp: 150, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.cars.push(rb1, rb2);
+    const wreck = { id: 9013, x: rbX + 68, y: roadY - 36, a: 0.35, speed: 0, color: '#2b2b2e', kind: 'sedan', driver: null, burning: true, path: [], pathI: 0, hp: 0, stuck: 0, brakeLight: 0, air: 0, honkT: 0 };
+    world.cars.push(wreck);
+    // Smoke column over the wreck (deterministic k-pattern like the rain
+    // splashes above; ~115px tall so it never covers the heroes).
+    for (let k = 0; k < 16; k++) {
+      world.particles.push({
+        x: wreck.x + (k * 37 % 44) - 22, y: wreck.y - 10 - k * 7,
+        vx: (k * 13 % 17) - 8, vy: -55 - (k % 5) * 6,
+        life: 0.5 + (k % 7) * 0.14, max: 1.4, color: 'rgba(70,70,78,0.65)', size: 7 + (k % 4) * 2, kind: 'smoke',
+      });
+    }
+    // Heli framing: the air unit spawned during the steps (wanted 84); park
+    // it upper-centre with its spotlight on the road by the player.
+    if (!world.heli) world.heli = { x: 0, y: 0, a: 0 };
+    world.heli.x = ax - 120; world.heli.y = roadY - 305;
+    world.heli.a = Math.atan2(car.y - world.heli.y, car.x - world.heli.x);
+    // Composition lock: drop any police the sim spawned beyond the staged
+    // three (1 chaser + 2 roadblock) so the frame reads exactly as staged.
+    const stagedIds = new Set([9003, 9010, 9011, 9012, 9013, 9020, 9021]);
+    world.cars = world.cars.filter(c => c.kind !== 'police' || stagedIds.has(c.id));
     // Wider framing than the driving default so the whole chase reads, and
     // centred on the neon cluster the chase was staged around. (Set after
     // the steps: update() lerps the camera toward the car while driving,
@@ -175,7 +205,12 @@ export function stageShot(name, world) {
   // mission: the armored-truck heist at golden hour — Vic on foot with an SMG,
   // the cracked cash truck ahead, three Marlin guards closing in, heat rising
   // and a police car rolling in from the north.
-  world.timeH = 17.8;
+  world.timeH = 18.5;
+  // Moor one marina boat in the docks harbor basin (render.js) so the frame
+  // reads as a working port. Shot-mode only: gameplay boats stay at the marina.
+  if (city.boats && city.boats[0]) {
+    city.boats[0].x = WORLD_W + 8; city.boats[0].y = city.docks.y + 120; city.boats[0].a = 0.4;
+  }
   world.mission.index = 5; world.mission.stage = 0; world.mission.done = false;
   world.setupHeist();
   const truck = world.cars.find(c => c.id === world.mission.data.truckId);

@@ -62,6 +62,7 @@ export class World {
     this.time = 0; this.timeH = 10; this.rain = 0; this.rainT = 30;
     this.shotMode = false; // staged screenshots never write to localStorage
     this.wanted = 0; this.wantedSeen = false;
+    this.heli = null; // police helicopter (spawns at 3+ stars, see updateHeli)
     this.player = {
       x: c.spawn.x, y: c.spawn.y, a: -Math.PI / 2, hp: PLAYER_HEALTH, cash: START_CASH,
       ammo: 24, onFoot: true, car: null, speed: 0, aim: -Math.PI / 2, bustT: 0, invuln: 0,
@@ -413,6 +414,7 @@ World.prototype.update = function (dt, input, audio) {
   this.updateTraffic(dt, audio);
   this.updatePeds(dt);
   this.updatePolice(dt, audio);
+  this.updateHeli(dt);
   this.updateRivals(dt);
   this.updateWanted(dt);
   this.updateMissions(dt);
@@ -697,7 +699,7 @@ World.prototype.updatePlayerCar = function (dt, input, audio) {
     audio.crash(1);
     this.cam.shake = 0.6;
     this.exitCar(audio);
-    car.hp = 0; car.driver = null;
+    car.hp = 0; car.driver = null; car.burning = true;
   }
   if (input.pressed('e')) this.exitCar(audio);
   if (input.pressed('h')) {
@@ -725,6 +727,7 @@ World.prototype.fireBullet = function (x, y, angle, byPlayer, damage = PISTOL_DA
     for (const c of this.cars) {
       if (dist2(bx, by, c.x, c.y) < 30 * 30) {
         c.hp -= damage * 0.6;
+        if (c.hp <= 0) c.burning = true;
         this.burst(bx, by, '#ffd76a', 5, 100);
         return;
       }
@@ -753,6 +756,9 @@ World.prototype.updateTraffic = function (dt, audio) {
   for (let i = this.cars.length - 1; i >= 0; i--) {
     const c = this.cars[i];
     if (c.driver !== 'traffic' && c.driver !== 'truck') continue;
+    // A wrecked car catches fire and stops for good (smoke in updateParticles).
+    if (c.hp <= 0) c.burning = true;
+    if (c.burning) { c.speed = 0; continue; }
     // The armored truck stops for good once it's been cracked open (heist).
     if (c.driver === 'truck' && c.hp <= 90) { c.speed = 0; c.brakeLight = 0.2; continue; }
     // Follow the route, one node at a time, keeping to the right-hand lane:
@@ -879,6 +885,8 @@ World.prototype.updatePolice = function (dt, audio) {
   // Police cars pursue: route to the player's node, then ram.
   for (const c of this.cars) {
     if (c.kind !== 'police') continue;
+    // Roadblock cruisers (and burning wrecks) hold position — no pursuit.
+    if (c.blockade || c.burning) { c.speed = 0; continue; }
     const target = c.path[c.pathI];
     const dPlayer = dist(c.x, c.y, p.x, p.y);
     if (dPlayer < 320) {
@@ -923,6 +931,32 @@ World.prototype.updatePolice = function (dt, audio) {
   }
 };
 
+// Police helicopter: at 3+ stars (wanted >= 60) an air unit shadows the
+// player from above. Visual pressure only — it never collides, shoots or
+// busts; it orbits ~260px out with its spotlight on you until the heat
+// dies below 2 stars (wanted < 40). The flight path is driven by world.time
+// (a slow orbit), so it is deterministic for a given seed + inputs; the
+// spawn offset derives from the player's facing, no rng draws needed.
+World.prototype.updateHeli = function (dt) {
+  const p = this.player;
+  if (!this.heli && this.wanted >= 60) {
+    const a = p.a + Math.PI; // come in from behind the player
+    this.heli = { x: p.x + Math.cos(a) * 420, y: p.y + Math.sin(a) * 420 - 120, a: p.a };
+  }
+  if (!this.heli) return;
+  if (this.wanted < 40) { this.heli = null; return; }
+  const oa = this.time * 0.35;
+  const hx = p.x + Math.cos(oa) * 260, hy = p.y + Math.sin(oa) * 260 - 60;
+  const px = this.heli.x, py = this.heli.y;
+  const k = 1 - Math.pow(0.02, dt);
+  this.heli.x = lerp(this.heli.x, hx, k);
+  this.heli.y = lerp(this.heli.y, hy, k);
+  // Face the direction of travel; when settled into the hover, face the player.
+  const mvx = this.heli.x - px, mvy = this.heli.y - py;
+  if (mvx * mvx + mvy * mvy > 0.01) this.heli.a = Math.atan2(mvy, mvx);
+  else this.heli.a = angTo(this.heli.x, this.heli.y, p.x, p.y);
+};
+
 // Marlin rival-crew cars: at 4-5 stars (and during the escort) they hunt the
 // player and ram — no bust, just damage and menace. Also drives the street-race
 // rival through the checkpoint list during mission 5.
@@ -938,6 +972,7 @@ World.prototype.updateRivals = function (dt) {
   }
   for (const c of this.cars) {
     if (c.kind !== 'rival') continue;
+    if (c.burning) { c.speed = 0; continue; }
     const dPlayer = dist(c.x, c.y, p.x, p.y);
     const target = c.path[c.pathI];
     if (dPlayer < 380) {
@@ -1173,6 +1208,19 @@ World.prototype.updateParticles = function (dt) {
   this.textPops = this.textPops.filter(tp => tp.life > 0);
   for (const s of this.skids) s.life -= dt;
   this.skids = this.skids.filter(s => s.life > 0);
+  // Burning wrecks smoke and flicker until the fire dies down. Emission is
+  // rate-limited per car and hard-capped by the total particle count, so a
+  // pile-up of wrecks can't flood the list.
+  for (const c of this.cars) {
+    if (!c.burning) continue;
+    if (this.particles.length > 420) break;
+    if (this.rng() < dt * 20) {
+      this.particles.push({ x: c.x + rf(this.rng, -16, 16), y: c.y + rf(this.rng, -8, 8), vx: rf(this.rng, -12, 12), vy: rf(this.rng, -85, -50), life: rf(this.rng, 0.7, 1.3), max: 1.3, color: 'rgba(70,70,78,0.55)', size: rf(this.rng, 5, 10), kind: 'smoke' });
+    }
+    if (this.rng() < dt * 14) {
+      this.particles.push({ x: c.x + rf(this.rng, -14, 14), y: c.y + rf(this.rng, -6, 6), vx: rf(this.rng, -20, 20), vy: rf(this.rng, -105, -60), life: rf(this.rng, 0.2, 0.45), max: 0.45, color: this.rng() < 0.5 ? '#ff8b37' : '#ffe2a0', size: rf(this.rng, 3, 6), kind: 'spark' });
+    }
+  }
   if (this.rain && this.rng() < 0.6) {
     this.particles.push({ x: this.cam.x + rf(this.rng, -700, 700), y: this.cam.y + rf(this.rng, -450, 450), vx: -40, vy: 420, life: 0.5, max: 0.5, color: 'rgba(180,200,220,0.6)', size: 1.5, kind: 'rain' });
   }
